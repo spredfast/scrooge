@@ -4,7 +4,7 @@ import com.typesafe.sbt.SbtSite.site
 import com.typesafe.sbt.site.SphinxSupport.Sphinx
 
 object Scrooge extends Build {
-  val libVersion = "3.9.1"
+  val libVersion = "3.9.1-thrift-0.9.0"
   val utilVersion = "6.5.0"
   val finagleVersion = "6.6.2"
 
@@ -99,7 +99,7 @@ object Scrooge extends Build {
     pomIncludeRepository := { _ => false },
     publishMavenStyle := true,
     pomExtra := (
-      <url>https://github.com/twitter/scrooge</url>
+      <url>https://github.com/Spredfast/scrooge</url>
       <licenses>
         <license>
           <name>Apache License, Version 2.0</name>
@@ -107,8 +107,8 @@ object Scrooge extends Build {
         </license>
       </licenses>
       <scm>
-        <url>git@github.com:twitter/scrooge.git</url>
-        <connection>scm:git:git@github.com:twitter/scrooge.git</connection>
+        <url>git@github.com:Spredfast/scrooge.git</url>
+        <connection>scm:git:git@github.com:Spredfast/scrooge.git</connection>
       </scm>
       <developers>
         <developer>
@@ -116,7 +116,13 @@ object Scrooge extends Build {
           <name>Twitter Inc.</name>
           <url>https://www.twitter.com/</url>
         </developer>
+        <developer>
+          <id>spredfast</id>
+          <name>Spredfast, Inc.</name>
+          <url>http://www.spredfast.com</url>
+        </developer>
       </developers>),
+  /*
     publishTo <<= version { (v: String) =>
       val nexus = "https://oss.sonatype.org/"
       if (v.trim.endsWith("SNAPSHOT"))
@@ -124,6 +130,15 @@ object Scrooge extends Build {
       else
         Some("releases"  at nexus + "service/local/staging/deploy/maven2")
     }
+  */
+    // Spredfast-specific publication to internal archiva server
+    publishTo <<= version { (v: String) =>
+      if (v.trim.endsWith("SNAPSHOT"))
+        None
+      else
+        Some("Repository Archiva Managed internal Repository" at "http://repository.spredfast.com/archiva/repository/internal")
+    },
+    credentials += Credentials(Path.userHome / ".archiva.credentials")
   )
 
   val jmockSettings = Seq(
