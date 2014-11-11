@@ -30,7 +30,7 @@ public class {{name}} {
     {{/functions}}
   }
 
-  public static class Client{{#extends_iface}} extends {{name}}.Client{{/extends_iface}} implements TServiceClient, Iface {
+  public static class Client{{#extends_iface}} extends {{name}}.Client{{/extends_iface}}{{^extends_iface}} extends TServiceClient{{/extends_iface}} implements Iface {
     public static class Factory implements TServiceClientFactory<Client> {
       public Factory() {}
       public Client getClient(TProtocol prot) {
@@ -48,32 +48,9 @@ public class {{name}} {
 
     public Client(TProtocol iprot, TProtocol oprot)
     {
-      {{#extends_iface}}
       super(iprot, oprot);
-      {{/extends_iface}}
-      {{^extends_iface}}
-      iprot_ = iprot;
-      oprot_ = oprot;
-      {{/extends_iface}}
-    }
-    {{^extends_iface}}
-
-    protected TProtocol iprot_;
-    protected TProtocol oprot_;
-
-    protected int seqid_;
-
-    public TProtocol getInputProtocol()
-    {
-      return this.iprot_;
     }
 
-    public TProtocol getOutputProtocol()
-    {
-      return this.oprot_;
-    }
-
-    {{/extends_iface}}
     {{#functions}}
     public {{{return_type.type_name}}} {{name}}({{{argument_list_with_types}}}) throws {{exceptions_string}}TException
     {
@@ -151,8 +128,8 @@ public class {{name}} {
     {{#functions}}
     public void {{name}}({{{argument_list_with_types}}}{{#has_args}}, {{/has_args}}AsyncMethodCallback<{{name}}_call> resultHandler) throws TException {
       checkReady();
-      {{name}}_call method_call = new {{name}}_call({{{argument_list}}}{{#has_args}}, {{/has_args}}resultHandler, this, protocolFactory, transport);
-      manager.call(method_call);
+      {{name}}_call method_call = new {{name}}_call({{{argument_list}}}{{#has_args}}, {{/has_args}}resultHandler, this, ___protocolFactory, ___transport);
+      ___manager.call(method_call);
     }
 
     public static class {{name}}_call extends TAsyncMethodCall {
