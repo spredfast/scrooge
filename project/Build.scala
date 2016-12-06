@@ -12,9 +12,9 @@ import scoverage.ScoverageKeys
 
 object Scrooge extends Build {
   val branch = Process("git" :: "rev-parse" :: "--abbrev-ref" :: "HEAD" :: Nil).!!.trim
-  val suffix = if (branch == "master") "" else "-SNAPSHOT"
+  val suffix = ""
 
-  val libVersion = "4.12.0" + suffix
+  val libVersion = "4.12.0-thrift-0.9.0" + suffix
 
   // To build the develop branch you need to publish util, and finagle locally:
   // 'git checkout develop; sbt publishLocal' to publish SNAPSHOT versions of these projects.
@@ -23,8 +23,9 @@ object Scrooge extends Build {
 
   val libthriftVersion = "0.5.0-7"
 
-  def util(which: String) = "com.twitter" %% ("util-"+which) % utilVersion
-  def finagle(which: String) = "com.twitter" %% ("finagle-"+which) % finagleVersion
+  def util(which: String) = "com.twitter" %% ("util-" + which) % utilVersion
+
+  def finagle(which: String) = "com.twitter" %% ("finagle-" + which) % finagleVersion
 
   val compileThrift = TaskKey[Seq[File]](
     "compile-thrift", "generate thrift needed for tests")
@@ -71,59 +72,55 @@ object Scrooge extends Build {
     publishArtifact in Test := false,
     pomIncludeRepository := { _ => false },
     publishMavenStyle := true,
-    pomExtra :=
-      <url>https://github.com/twitter/scrooge</url>
-      <licenses>
-        <license>
-          <name>Apache License, Version 2.0</name>
-          <url>http://www.apache.org/licenses/LICENSE-2.0</url>
-        </license>
-      </licenses>
-      <scm>
-        <url>git@github.com:twitter/scrooge.git</url>
-        <connection>scm:git:git@github.com:twitter/scrooge.git</connection>
-      </scm>
-      <developers>
-        <developer>
-          <id>twitter</id>
-          <name>Twitter Inc.</name>
-          <url>https://www.twitter.com/</url>
-        </developer>
-      </developers>,
+    pomExtra := (
+      <url>https://github.com/Spredfast/scrooge</url>
+        <licenses>
+          <license>
+            <name>Apache License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0</url>
+          </license>
+        </licenses>
+        <scm>
+          <url>git@github.com:Spredfast/scrooge.git</url>
+          <connection>scm:git:git@github.com:Spredfast/scrooge.git</connection>
+        </scm>
+        <developers>
+          <developer>
+            <id>twitter</id>
+            <name>Twitter Inc.</name>
+            <url>https://www.twitter.com/</url>
+          </developer>
+          <developer>
+            <id>spredfast</id>
+            <name>Spredfast, Inc.</name>
+            <url>http://www.spredfast.com</url>
+          </developer>
+        </developers>),
+    // Spredfast-specific publication to internal archiva server
     publishTo <<= version { (v: String) =>
-      val nexus = "https://oss.sonatype.org/"
       if (v.trim.endsWith("SNAPSHOT"))
-        Some("snapshots" at nexus + "content/repositories/snapshots")
+        None
       else
-        Some("releases"  at nexus + "service/local/staging/deploy/maven2")
+        Some("Repository Archiva Managed internal Repository" at "https://buildrepo.sf-ops.net/artifactory/sf-release-local")
     },
-
-    resourceGenerators in Compile <+=
-      (resourceManaged in Compile, name, version) map { (dir, name, ver) =>
-        val file = dir / "com" / "twitter" / name / "build.properties"
-        val buildRev = Process("git" :: "rev-parse" :: "HEAD" :: Nil).!!.trim
-        val buildName = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss").format(new java.util.Date)
-        val contents = s"name=$name\nversion=$ver\nbuild_revision=$buildRev\nbuild_name=$buildName"
-        IO.write(file, contents)
-        Seq(file)
-      }
+    credentials += Credentials(Path.userHome / ".ivy2/.credentials")
   )
 
   val sharedSettings =
     sharedSettingsWithoutScalaVersion ++
-    Seq(
-      scalaVersion := "2.11.8",
-      crossScalaVersions := Seq("2.11.8", "2.12.0"),
-      scalacOptions := Seq(
-        "-deprecation",
-        "-unchecked",
-        "-feature", "-Xlint",
-        "-encoding", "utf8",
-        "-target:jvm-1.8",
-        "-Ypatmat-exhaust-depth", "40"),
-      javacOptions ++= Seq("-source", "1.8", "-target", "1.8", "-Xlint:unchecked"),
-      javacOptions in doc := Seq("-source", "1.8")
-    )
+      Seq(
+        scalaVersion := "2.11.8",
+        crossScalaVersions := Seq("2.11.8", "2.12.0"),
+        scalacOptions := Seq(
+          "-deprecation",
+          "-unchecked",
+          "-feature", "-Xlint",
+          "-encoding", "utf8",
+          "-target:jvm-1.8",
+          "-Ypatmat-exhaust-depth", "40"),
+        javacOptions ++= Seq("-source", "1.8", "-target", "1.8", "-Xlint:unchecked"),
+        javacOptions in doc := Seq("-source", "1.8")
+      )
 
   // scalac options for projects that are scala 2.10
   // or cross compiled with scala 2.10
@@ -136,23 +133,23 @@ object Scrooge extends Build {
   // settings for projects that are scala 2.10
   val settingsWithTwoTen =
     sharedSettingsWithoutScalaVersion ++
-    Seq(
-      scalaVersion := "2.10.6",
-      scalacOptions := scalacTwoTenOptions,
-      javacOptions ++= Seq("-source", "1.7", "-target", "1.7", "-Xlint:unchecked"),
-      javacOptions in doc := Seq("-source", "1.7")
-    )
+      Seq(
+        scalaVersion := "2.10.6",
+        scalacOptions := scalacTwoTenOptions,
+        javacOptions ++= Seq("-source", "1.7", "-target", "1.7", "-Xlint:unchecked"),
+        javacOptions in doc := Seq("-source", "1.7")
+      )
 
   // settings for projects that are cross compiled with scala 2.10
   val settingsCrossCompiledWithTwoTen =
     sharedSettingsWithoutScalaVersion ++
-    Seq(
-      crossScalaVersions := Seq("2.10.6", "2.11.8"),
-      scalaVersion := "2.11.8",
-      scalacOptions := scalacTwoTenOptions,
-      javacOptions ++= Seq("-source", "1.7", "-target", "1.7", "-Xlint:unchecked"),
-      javacOptions in doc := Seq("-source", "1.7")
-    )
+      Seq(
+        crossScalaVersions := Seq("2.10.6", "2.11.8"),
+        scalaVersion := "2.11.8",
+        scalacOptions := scalacTwoTenOptions,
+        javacOptions ++= Seq("-source", "1.7", "-target", "1.7", "-Xlint:unchecked"),
+        javacOptions in doc := Seq("-source", "1.7")
+      )
 
   val jmockSettings = Seq(
     libraryDependencies ++= Seq(
@@ -217,7 +214,7 @@ object Scrooge extends Build {
         Seq("org.scala-lang.modules" %% "scala-parser-combinators" % "1.0.4")
       case _ => Nil
     }),
-    test in assembly := {},  // Skip tests when running assembly.
+    test in assembly := {}, // Skip tests when running assembly.
     mainClass in assembly := Some("com.twitter.scrooge.Main")
   )
 
@@ -236,7 +233,7 @@ object Scrooge extends Build {
       "org.slf4j" % "slf4j-log4j12" % "1.7.7" % "test", // used in thrift transports
       finagle("thrift") % "test"
     ),
-    test in assembly := {},  // Skip tests when running assembly.
+    test in assembly := {}, // Skip tests when running assembly.
     publishArtifact := false
   ).dependsOn(scroogeGenerator).settings(crossScalaVersions := Seq("2.11.8"))
 
@@ -278,17 +275,19 @@ object Scrooge extends Build {
     base = file("scrooge-sbt-plugin"),
     settings = Defaults.coreDefaultSettings ++
       settingsWithTwoTen ++
-      bintrayPublishSettings ++
       buildInfoSettings
   ).settings(
-      sourceGenerators in Compile <+= buildInfo,
-      buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
-      buildInfoPackage := "com.twitter",
-      sbtPlugin := true,
-      publishMavenStyle := false,
-      repository in bintray := "sbt-plugins",
-      licenses += (("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0.html"))),
-      bintrayOrganization in bintray := Some("twittercsl")
+    sourceGenerators in Compile <+= buildInfo,
+    buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
+    buildInfoPackage := "com.twitter",
+    sbtPlugin := true,
+    publishTo <<= version { (v: String) =>
+      if (v.trim.endsWith("SNAPSHOT"))
+        None
+      else
+        Some("Repository Archiva Managed internal Repository" at "https://buildrepo.sf-ops.net/artifactory/sf-release-local")
+    },
+    credentials += Credentials(Path.userHome / ".ivy2/.credentials")
   ).dependsOn(scroogeGenerator)
 
   lazy val scroogeLinter = Project(
@@ -316,34 +315,36 @@ object Scrooge extends Build {
       dumpClasspathSettings ++
       JmhPlugin.projectSettings
   )
-  .enablePlugins(JmhPlugin)
-  .settings(
-    libraryDependencies ++= Seq(
-      "org.slf4j" % "slf4j-log4j12" % "1.7.7", // Needed for the thrift transports
-      "com.twitter" % "libthrift" % libthriftVersion
-    )
-  ).dependsOn(scroogeGenerator, scroogeSerializer)
+    .enablePlugins(JmhPlugin)
+    .settings(
+      libraryDependencies ++= Seq(
+        "org.slf4j" % "slf4j-log4j12" % "1.7.7", // Needed for the thrift transports
+        "com.twitter" % "libthrift" % libthriftVersion
+      )
+    ).dependsOn(scroogeGenerator, scroogeSerializer)
 
   lazy val scroogeDoc = Project(
     id = "scrooge-doc",
     base = file("doc"),
     settings =
       Defaults.coreDefaultSettings ++
-      sharedSettings ++
-      site.settings ++
-      site.sphinxSupport() ++
-      Seq(
-        scalacOptions in doc <++= version.map(v => Seq("-doc-title", "Scrooge", "-doc-version", v)),
-        includeFilter in Sphinx := ("*.html" | "*.png" | "*.js" | "*.css" | "*.gif" | "*.txt")
-      )
-    ).configs(DocTest).settings(
-      inConfig(DocTest)(Defaults.testSettings): _*
-    ).settings(
-      unmanagedSourceDirectories in DocTest <+= baseDirectory { _ / "src/sphinx/code" },
+        sharedSettings ++
+        site.settings ++
+        site.sphinxSupport() ++
+        Seq(
+          scalacOptions in doc <++= version.map(v => Seq("-doc-title", "Scrooge", "-doc-version", v)),
+          includeFilter in Sphinx := ("*.html" | "*.png" | "*.js" | "*.css" | "*.gif" | "*.txt")
+        )
+  ).configs(DocTest).settings(
+    inConfig(DocTest)(Defaults.testSettings): _*
+  ).settings(
+    unmanagedSourceDirectories in DocTest <+= baseDirectory {
+      _ / "src/sphinx/code"
+    },
 
-      // Make the "test" command run both, test and doctest:test
-      test <<= Seq(test in Test, test in DocTest).dependOn
-    )
+    // Make the "test" command run both, test and doctest:test
+    test <<= Seq(test in Test, test in DocTest).dependOn
+  )
 
   /* Test Configuration for running tests on doc sources */
   lazy val DocTest = config("testdoc") extend Test
