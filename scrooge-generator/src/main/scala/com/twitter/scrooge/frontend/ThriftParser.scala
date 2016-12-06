@@ -16,14 +16,12 @@
 
 package com.twitter.scrooge.frontend
 
+import java.util.logging.Logger
 import com.twitter.scrooge.ast._
 import java.io.FileNotFoundException
 import scala.collection.concurrent.{Map, TrieMap}
 import scala.collection.mutable
 import scala.util.parsing.combinator._
-
-case class FileParseException(filename: String, cause: Throwable)
-  extends Exception("Exception parsing: %s".format(filename), cause)
 
 class ThriftParser(
   importer: Importer,
@@ -31,14 +29,14 @@ class ThriftParser(
   defaultOptional: Boolean = false,
   skipIncludes: Boolean = false,
   documentCache: Map[String, Document] = new TrieMap[String, Document]
-) extends RegexParsers {
+)(implicit val logger: Logger = Logger.getLogger(getClass.getName)) extends RegexParsers {
 
 
-  //                            1    2        3                   4         4a    4b 4c       4d
-  override val whiteSpace = """(\s+|(//.*\n)|(#([^@\n][^\n]*)?\n)|(/\*[^\*]([^\*]+|\n|\*(?!/))*\*/))+""".r
+  //                            1    2           3                     4         4a    4b    4c       4d
+  override val whiteSpace = """(\s+|(//.*\r?\n)|(#([^@\r\n].*)?\r?\n)|(/\*[^\*]([^\*]+|\r?\n|\*(?!/))*\*/))+""".r
   // 1: whitespace, 1 or more
-  // 2: leading // followed by anything 0 or more, until \n
-  // 3: leading #  then NOT a @ followed by anything 0 or more, until \n
+  // 2: leading // followed by anything 0 or more, until newline
+  // 3: leading #  then NOT a @ followed by anything 0 or more, until newline
   // 4: leading /* then NOT a *, then...
   // 4a:  not a *, 1 or more times
   // 4b:  OR a newline
@@ -98,9 +96,9 @@ class ThriftParser(
    */
 
   val identifierRegex = "[A-Za-z_][A-Za-z0-9\\._]*".r
-  lazy val identifier = identifierRegex ^^ {
+  lazy val identifier = positioned(identifierRegex ^^ {
     x => Identifier(x)
-  }
+  })
 
   private[this] val thriftKeywords = Set[String](
     "async",
@@ -133,18 +131,23 @@ class ThriftParser(
   )
 
   lazy val simpleIDRegex = "[A-Za-z_][A-Za-z0-9_]*".r
-  lazy val simpleID = simpleIDRegex ^^ { x =>
+  lazy val simpleID = positioned(simpleIDRegex ^^ { x =>
     if (thriftKeywords.contains(x))
       failOrWarn(new KeywordException(x))
 
     SimpleID(x)
-  }
+  })
 
-  // ride hand side (RHS)
+  // right hand side (RHS)
 
-  lazy val rhs: Parser[RHS] = {
-    numberLiteral | stringLiteral | listOrMapRHS | mapRHS | idRHS |
+  lazy val rhs: Parser[RHS] = positioned({
+    numberLiteral | boolLiteral | stringLiteral | listOrMapRHS | mapRHS | idRHS |
       failure("constant expected")
+  })
+
+  lazy val boolLiteral: Parser[BoolLiteral] = ("true" | "True" | "false" | "False") ^^ { x =>
+    if (x.toLowerCase == "false") BoolLiteral(false)
+    else BoolLiteral(true)
   }
 
   lazy val intConstant = "[-+]?\\d+(?!\\.)".r ^^ {
@@ -223,22 +226,30 @@ class ThriftParser(
     literal => literal.value
   }
 
+  // Cast IntLiterals into booleans.
+  private[this] def convertRhs(fieldType: FieldType, rhs: RHS): RHS = {
+    fieldType match {
+      case TBool => rhs match {
+        case x: BoolLiteral => x
+        case IntLiteral(0) => BoolLiteral(false)
+        case IntLiteral(1) => BoolLiteral(true)
+        case _ => throw new TypeMismatchException(s"Can't assign $rhs to a bool", rhs)
+      }
+      case _ => rhs
+    }
+  }
+
   // fields
 
-  lazy val field = (opt(comments) ~> opt(fieldId) ~ fieldReq) ~
+  lazy val field = positioned((opt(comments) ~ opt(fieldId) ~ fieldReq) ~
     (fieldType ~ defaultedAnnotations ~ simpleID) ~
     opt("=" ~> rhs) ~ defaultedAnnotations <~ opt(listSeparator) ^^ {
-      case (fid ~ req) ~ (ftype ~ typeAnnotations ~ sid) ~ value ~ fieldAnnotations => {
-        val transformedVal = ftype match {
-          case TBool => value map {
-            case IntLiteral(0) => BoolLiteral(false)
-            case _ => BoolLiteral(true)
-          }
-          case _ => value
-        }
+      case (comm ~ fid ~ req) ~ (ftype ~ typeAnnotations ~ sid) ~ value ~ fieldAnnotations =>
+        val transformedVal = value.map(convertRhs(ftype, _))
 
-        // if field is marked optional and a default is defined, ignore the optional part.
-        val transformedReq = if (!defaultOptional && transformedVal.isDefined && req.isOptional) Requiredness.Default else req
+        val transformedReq =
+          if (!defaultOptional && transformedVal.isDefined && req.isOptional) Requiredness.Default
+          else req
 
         Field(
           fid.getOrElse(0),
@@ -248,10 +259,10 @@ class ThriftParser(
           transformedVal,
           transformedReq,
           typeAnnotations,
-          fieldAnnotations
+          fieldAnnotations,
+          comm
         )
-    }
-  }
+    })
 
   lazy val fieldId = intConstant <~ ":" ^^ {
     x => x.value.toInt
@@ -260,6 +271,7 @@ class ThriftParser(
   lazy val fieldReq = opt("required" | "optional") ^^ {
     case Some("required") => Requiredness.Required
     case Some("optional") => Requiredness.Optional
+    case Some(r) => throw new ParseException(s"Invalid requiredness value '$r'")
     case None => Requiredness.Default
   }
 
@@ -273,9 +285,8 @@ class ThriftParser(
         id.name,
         if (oneway.isDefined) OnewayVoid else ftype,
         fixFieldIds(args),
-        throws.map {
-          fixFieldIds(_)
-        }.getOrElse(Nil), comment)
+        throws.map(fixFieldIds).getOrElse(Nil),
+        comment)
   }
 
   lazy val functionType: Parser[FunctionType] = ("void" ^^^ Void) | fieldType
@@ -287,7 +298,8 @@ class ThriftParser(
   lazy val definition = const | typedef | enum | senum | struct | union | exception | service
 
   lazy val const = opt(comments) ~ ("const" ~> fieldType) ~ simpleID ~ ("=" ~> rhs) ~ opt(listSeparator) ^^ {
-    case comment ~ ftype ~ sid ~ const ~ _ => ConstDefinition(sid, ftype, const, comment)
+    case comment ~ ftype ~ sid ~ const ~ _ =>
+      ConstDefinition(sid, ftype, convertRhs(ftype, const), comment)
   }
 
   lazy val typedef = (opt(comments) ~ "typedef") ~> fieldType ~ defaultedAnnotations ~ simpleID ^^ {
@@ -295,8 +307,8 @@ class ThriftParser(
   }
 
   lazy val enum = (opt(comments) ~ (("enum" ~> simpleID) <~ "{")) ~ rep(opt(comments) ~ simpleID ~ opt("=" ~> intConstant) <~
-    opt(listSeparator)) <~ "}" ^^ {
-    case comment ~ sid ~ items =>
+    opt(listSeparator)) ~ ("}" ~> defaultedAnnotations) ^^ {
+    case comment ~ sid ~ items ~ annotation  =>
       var failed: Option[Int] = None
       val seen = new mutable.HashSet[Int]
       var nextValue = 0
@@ -314,7 +326,7 @@ class ThriftParser(
       if (failed.isDefined) {
         throw new RepeatingEnumValueException(sid.name, failed.get)
       } else {
-        Enum(sid, values.toList, comment)
+        Enum(sid, values.toList, comment, annotation)
       }
   }
 
@@ -328,30 +340,32 @@ class ThriftParser(
   def structLike(keyword: String) =
     (opt(comments) ~ ((keyword ~> simpleID) <~ "{")) ~ rep(field) ~ ("}" ~> defaultedAnnotations)
 
-  lazy val struct = structLike("struct") ^^ {
+  lazy val struct = positioned(structLike("struct") ^^ {
     case comment ~ sid ~ fields ~ annotations =>
       Struct(sid, sid.name, fixFieldIds(fields), comment, annotations)
-  }
+  })
 
   private[this] val disallowedUnionFieldNames = Set("unknown_union_field", "unknownunionfield") map { _.toLowerCase }
 
-  lazy val union = structLike("union") ^^ {
+  lazy val union = positioned(structLike("union") ^^ {
     case comment ~ sid ~ fields ~ annotations =>
       val fields0 = fields.map {
-        case f @ Field(_, _, _, _, _, r, _, _) if r == Requiredness.Default =>
+        case f if f.requiredness == Requiredness.Default =>
           if (disallowedUnionFieldNames.contains(f.sid.name.toLowerCase)) {
             throw new UnionFieldInvalidNameException(sid.name, f.sid.name)
           } else f
-        case f @ _ =>
+        case f =>
           failOrWarn(UnionFieldRequirednessException(sid.name, f.sid.name, f.requiredness.toString))
           f.copy(requiredness = Requiredness.Default)
       }
 
       Union(sid, sid.name, fixFieldIds(fields0), comment, annotations)
-  }
+  })
 
-  lazy val exception = (opt(comments) ~ ("exception" ~> simpleID <~ "{")) ~ opt(rep(field)) <~ "}" ^^ {
-    case comment ~ sid ~ fields => Exception_(sid, sid.name, fixFieldIds(fields.getOrElse(Nil)), comment)
+  lazy val exception = (opt(comments) ~ ("exception" ~> simpleID <~ "{")) ~ opt(rep(field)) ~
+    ("}" ~> defaultedAnnotations) ^^ {
+    case comment ~ sid ~ fields ~ annotations =>
+      Exception_(sid, sid.name, fixFieldIds(fields.getOrElse(Nil)), comment, annotations)
   }
 
   lazy val service = (opt(comments) ~ ("service" ~> simpleID)) ~ opt("extends" ~> serviceParentID) ~ ("{" ~> rep(function) <~
@@ -362,9 +376,8 @@ class ThriftParser(
 
   // This is a simpleID without the keyword check. Filenames that are thrift keywords are allowed.
   lazy val serviceParentID = opt(simpleIDRegex <~ ".") ~ simpleID ^^ {
-    case prefix ~ sid => {
+    case prefix ~ sid =>
       ServiceParent(sid, prefix.map(SimpleID(_)))
-    }
   }
 
   // document
@@ -375,7 +388,7 @@ class ThriftParser(
 
   lazy val header: Parser[Header] = include | cppInclude | namespace
 
-  lazy val include = opt(comments) ~> "include" ~> stringLiteral ^^ { s =>
+  lazy val include = opt(comments) ~> "include" ~> positioned(stringLiteral ^^ { s =>
     val doc =
       if (skipIncludes) {
         Document(Seq(), Seq())
@@ -383,7 +396,7 @@ class ThriftParser(
         parseFile(s.value)
       }
     Include(s.value, doc)
-  }
+  })
 
   // bogus dude.
   lazy val cppInclude = "cpp_include" ~> stringLiteral ^^ {
@@ -419,15 +432,12 @@ class ThriftParser(
 
   lazy val defaultedAnnotations = opt(annotationGroup) ^^ { _ getOrElse Map.empty }
 
-  def parse[T](in: String, parser: Parser[T], file: Option[String] = None): T = try {
+  def parse[T](in: String, parser: Parser[T], file: Option[String] = None): T =
     parseAll(parser, in) match {
       case Success(result, _) => result
-      case x@Failure(msg, z) => throw new ParseException(x.toString)
-      case x@Error(msg, _) => throw new ParseException(x.toString)
+      case x@Failure(msg, z) => throw new ParseException(x.toString())
+      case x@Error(msg, _) => throw new ParseException(x.toString())
     }
-  } catch {
-    case e: Throwable => throw file.map(FileParseException(_, e)).getOrElse(e)
-  }
 
   def parseFile(filename: String): Document = {
     importer.getResolvedPath(filename) match {
@@ -459,7 +469,12 @@ class ThriftParser(
       this.defaultOptional,
       this.skipIncludes,
       this.documentCache)
-    newParser.parse(contents.data, newParser.document, contents.thriftFilename)
+    try {
+      newParser.parse(contents.data, newParser.document, contents.thriftFilename)
+    } catch {
+      case e: Throwable => throw new FileParseException(filename, e)
+    }
+
   }
 
   // helper functions
@@ -467,6 +482,6 @@ class ThriftParser(
     if (strict)
       throw ex
     else
-      println("Warning: " + ex.getMessage)
+      logger.warning(ex.getMessage)
   }
 }

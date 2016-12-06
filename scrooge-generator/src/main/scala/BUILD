@@ -1,21 +1,21 @@
-scala_library(name='scala',
+scala_library(
   provides = scala_artifact(
     org = 'com.twitter',
     name = 'scrooge-generator',
     repo = artifactory,
   ),
   dependencies=[
-    '3rdparty:scala-library',
-    '3rdparty:commons-cli',
-    '3rdparty:guava',
-    '3rdparty:libthrift-0.5.0',
-    '3rdparty:mustache-compiler',
-    '3rdparty:scopt',
+    '3rdparty/jvm/com/github/scopt',
+    '3rdparty/jvm/com/github/spullara/mustache/java',
+    '3rdparty/jvm/com/google/code/findbugs:jsr305',
+    '3rdparty/jvm/com/google/guava',
+    '3rdparty/jvm/commons-cli',
     '3rdparty/jvm/org/codehaus/plexus:plexus-utils',
-    'finagle/finagle-core',
-    'util/util-codec',
-    'util/util-core',
+    '3rdparty/jvm/org/scala-lang/modules:scala-parser-combinators',
+    '3rdparty/jvm/org/scala-lang:scala-library',
   ],
+  fatal_warnings=True,
+  strict_deps=True,
   sources=rglobs('*.scala'),
   resources=[
     'scrooge/scrooge-generator/src/main/resources:resources'

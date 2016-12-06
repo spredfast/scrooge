@@ -1,8 +1,13 @@
 package com.twitter.scrooge.frontend
 
-class ParseException(reason: String, cause: Throwable) extends Exception(reason, cause) {
+import scala.util.control.NoStackTrace
+
+class ParseException(reason: String, cause: Throwable) extends Exception(reason, cause) with NoStackTrace{
   def this(reason: String) = this(reason, null)
 }
+
+class FileParseException(filename: String, cause: Throwable)
+  extends ParseException("Exception parsing: %s".format(filename), cause)
 
 // severe errors
 class NegativeFieldIdException(name: String)

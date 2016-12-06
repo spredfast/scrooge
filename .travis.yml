@@ -1,10 +1,38 @@
+# This is necessary until https://github.com/travis-ci/travis-ci/issues/3120 is
+# fixed
+sudo: required
+
 language: scala
+
+env:
+  - SKIP_FLAKY=true
+
+# These directories are cached to S3 at the end of the build
+cache:
+  directories:
+   - $HOME/.ivy2/cache
+   - $HOME/.sbt/boot/scala-$TRAVIS_SCALA_VERSION
+
 scala:
-  - 2.10.3
+  - 2.11.8
 
 jdk:
-  - oraclejdk7
-  - openjdk6
-  - openjdk7
+  - oraclejdk8
 
-script: "./sbt ++$TRAVIS_SCALA_VERSION test"
+notifications:
+  hipchat:
+    rooms:
+      secure: olqJQz/4oPk0IYPAWLyOGwzDxNwGCjY0ZGXUnfd1MHzReWsb3opPwF9QUSGbpHHBhyLi8DLxrPXuBPhg/9TC1leIvTBAOKDPilV4XVZCNjH/VQ7JdiAREJC2o3M2pr6iwovEHO/k6a1TORXUf9Q2vX09FvFpiIcq+hpjR9BciVM=
+
+before_script:
+  - unset SBT_OPTS
+  - curl -s https://raw.githubusercontent.com/twitter/dodo/develop/bin/build | bash -s -- --no-test scrooge
+  - travis_retry ./sbt --error -Dsbt.log.noformat=true ++$TRAVIS_SCALA_VERSION update
+
+script:
+  - travis_retry ./sbt -Dsbt.log.noformat=true ++$TRAVIS_SCALA_VERSION clean coverage test coverageReport
+  - travis_retry ./sbt -Dsbt.log.noformat=true ++$TRAVIS_SCALA_VERSION "project scrooge-generator-tests" coverage test coverageReport
+  - ./sbt -Dsbt.log.noformat=true ++$TRAVIS_SCALA_VERSION coverageAggregate
+
+after_success:
+  - bash <(curl -s https://codecov.io/bash)

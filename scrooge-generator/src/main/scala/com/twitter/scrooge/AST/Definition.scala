@@ -17,7 +17,8 @@ case class Typedef(sid: SimpleID, fieldType: FieldType, annotations: Map[String,
 case class Enum(
   sid: SimpleID,
   values: Seq[EnumField],
-  docstring: Option[String]
+  docstring: Option[String],
+  annotations: Map[String, String] = Map.empty
 ) extends Definition
 
 case class EnumField(sid: SimpleID, value: Int, docstring: Option[String]) extends Definition
@@ -54,11 +55,14 @@ case class FunctionArgs(
   override val docstring: Option[String] = None
   override val annotations: Map[String, String] = Map.empty
 }
+
 case class FunctionResult(
   sid: SimpleID,
   originalName: String,
-  fields: Seq[Field]
+  success: Option[Field], // None for void methods
+  exceptions: Seq[Field]
 ) extends StructLike {
+  override val fields = success.toList ++ exceptions
   override val docstring: Option[String] = None
   override val annotations: Map[String, String] = Map.empty
 }
@@ -67,11 +71,9 @@ case class Exception_(
   sid: SimpleID,
   originalName: String,
   fields: Seq[Field],
-  docstring: Option[String]
-) extends StructLike {
-  override val annotations: Map[String, String] = Map.empty
-}
-
+  docstring: Option[String],
+  annotations: Map[String, String] = Map.empty
+) extends StructLike
 
 case class Service(
   sid: SimpleID,
@@ -80,7 +82,11 @@ case class Service(
   docstring: Option[String]
 ) extends Definition
 
+/**
+ * Identifier for the parent service.
+ * @param filename Set if the parent service is imported from another file
+ */
 case class ServiceParent(
   sid: SimpleID,
-  prefix: Option[SimpleID],
-  service: Option[Service] = None)
+  filename: Option[SimpleID]
+)

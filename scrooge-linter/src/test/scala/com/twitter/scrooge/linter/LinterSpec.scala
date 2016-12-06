@@ -17,15 +17,10 @@
 package com.twitter.scrooge.linter
 
 import com.twitter.scrooge.ast._
-import java.io.{ObjectInputStream, ByteArrayInputStream, ObjectOutputStream, ByteArrayOutputStream}
-import java.nio.ByteBuffer
-import org.apache.thrift.protocol._
-import org.apache.thrift.transport.TMemoryBuffer
 import org.junit.runner.RunWith
-import org.scalatest.junit.JUnitRunner
 import org.scalatest.WordSpec
 import org.scalatest.junit.JUnitRunner
-import org.scalatest.matchers.MustMatchers
+import org.scalatest.MustMatchers
 
 
 @RunWith(classOf[JUnitRunner])
@@ -47,7 +42,7 @@ class LinterSpec extends WordSpec with MustMatchers {
     "fail Namespaces" in {
       val errors = LintRule.Namespaces(Document(Seq(Namespace("java", SimpleID("asdf"))), Nil)).toSeq
       errors.length must be(1)
-      assert(errors(0).msg contains("Missing namespace"))
+      assert(errors(0).msg contains ("Missing namespace"))
     }
 
     "pass RelativeIncludes" in {
@@ -68,7 +63,7 @@ class LinterSpec extends WordSpec with MustMatchers {
           Include("./dir1/../dir1/include1.thrift", Document(Seq(), Seq()))),
         Nil)).toSeq
       errors.size must be(1)
-      assert(errors(0).msg contains("Relative include path found"))
+      assert(errors(0).msg contains ("Relative include path found"))
     }
 
     "pass CamelCase" in {
@@ -98,7 +93,101 @@ class LinterSpec extends WordSpec with MustMatchers {
             TString)),
           None)))).toSeq
       errors.length must be(1)
-      assert(errors(0).msg contains("lowerCamelCase"))
+      assert(errors(0).msg contains ("lowerCamelCase"))
+    }
+
+
+    def struct(name: String, fields: Map[String, FieldType], persisted: Boolean = false) =
+      Struct(
+        SimpleID(name),
+        name,
+        fields.zipWithIndex.map {
+          case ((fieldName, fieldType), i) => Field(i, SimpleID(fieldName), fieldName, fieldType)
+        }.toSeq,
+        None,
+        if (persisted) Map("persisted" -> "true") else Map.empty
+      )
+
+
+    "fail TransitivePersistence" in {
+      val errors = LintRule.TransitivePersistence(
+        Document(
+          Seq(),
+          Seq(
+            struct(
+              "SomeType",
+              Map(
+                "foo" -> TString,
+                "bar" -> StructType(struct("SomeOtherType", Map.empty))
+              ),
+              true
+            )
+          )
+        )).toSeq
+      errors.length must be(1)
+      val error = errors(0).msg
+      assert(error.contains("persisted"))
+      assert(error.contains("SomeType"))
+      assert(error.contains("SomeOtherType"))
+    }
+
+    "pass TransitivePersistence" in {
+      mustPass(LintRule.TransitivePersistence(
+        Document(
+          Seq(),
+          Seq(
+            struct(
+              "SomeType",
+              Map(
+                "foo" -> TString,
+                "bar" -> StructType(struct("SomeOtherType", Map.empty, true))
+              ),
+              true
+            )
+          )
+        )))
+    }
+
+    "fail DocumentedPersisted" in {
+      val errors = LintRule.DocumentedPersisted(
+        Document(
+          Seq(),
+          Seq(
+            struct(
+              "SomeType",
+              Map(
+                "foo" -> TString
+              ),
+              true
+            )
+          )
+        )).toSeq
+      errors.length must be(2)
+      assert(errors.forall(_.level == LintLevel.Warning))
+      val structError = errors.head.msg
+      assert(structError.contains("SomeType"))
+      val fieldError = errors(1).msg
+      assert(fieldError.contains("foo"))
+      assert(fieldError.contains("SomeType"))
+    }
+
+    "pass DocumentedPersisted" in {
+      mustPass(LintRule.DocumentedPersisted(
+        Document(
+          Seq(),
+          Seq(
+            Struct(
+              SimpleID("SomeType"),
+              "SomeType",
+              Seq(Field(1,
+                SimpleID("foo"),
+                "foo",
+                TString,
+                docstring = Some("blah blah"))),
+              docstring = Some("documented struct is documented"),
+              Map("persisted" -> "true"))
+          )
+        )))
     }
 
     "pass RequiredFieldDefault" in {
@@ -143,7 +232,7 @@ class LinterSpec extends WordSpec with MustMatchers {
               requiredness = Requiredness.Required)),
           None)))).toSeq
       errors.length must be(1)
-      assert(errors(0).msg contains("Required field"))
+      assert(errors(0).msg contains ("Required field"))
     }
 
     "pass Keywords" in {
@@ -185,11 +274,50 @@ class LinterSpec extends WordSpec with MustMatchers {
               "val",
               TString,
               default = Some(StringLiteral("v1")),
+              requiredness = Requiredness.Optional)),
+          None)))).toSeq
+      errors.length must be(1)
+      assert(errors(0).msg contains ("Avoid using keywords"))
+    }
+
+    "pass non negative index" in {
+      mustPass(
+        LintRule.FieldIndexGreaterThanZeroRule(Document(
+          Seq(),
+          Seq(Struct(
+            SimpleID("SomeType"),
+            "SomeType",
+            Seq(
+              Field(
+                1,
+                SimpleID("val"),
+                "val",
+                TString,
+                default = Some(StringLiteral("v1")),
+                requiredness = Requiredness.Optional)
+            ),
+            None))))
+      )
+    }
+
+    "warn non negative index" in {
+      val errors = LintRule.FieldIndexGreaterThanZeroRule(Document(
+        Seq(),
+        Seq(Struct(
+          SimpleID("SomeType"),
+          "SomeType",
+          Seq(
+            Field(
+              -1,
+              SimpleID("val"),
+              "val",
+              TString,
+              default = Some(StringLiteral("v1")),
               requiredness = Requiredness.Optional)
           ),
           None)))).toSeq
-        errors.length must be(1)
-        assert(errors(0).msg contains("Avoid using keywords"))
+      errors.length must be(1)
+      assert(errors(0).msg contains ("Field id should be supplied"))
     }
   }
 }

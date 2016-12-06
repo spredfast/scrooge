@@ -26,42 +26,43 @@ object Dictionary {
   }
 
   case class CodeFragment(data: String) extends Value {
-    def toBoolean = data != ""
-    def toData = data
-    def children = Nil
-    override def toString = toData
+    def toBoolean: Boolean = data != ""
+    def toData: String = data
+    def children: Seq[Dictionary] = Nil
+    override def toString: String = toData
     def append(suffix: String): CodeFragment = CodeFragment(data + suffix)
   }
 
   case class BooleanValue(data: Boolean) extends Value {
-    def toBoolean = data
-    def toData = if (data) "true" else "false"
-    def children = Nil
+    def toBoolean: Boolean = data
+    def toData: String = if (data) "true" else "false"
+    def children: Seq[Dictionary] = Nil
   }
 
   case class ListValue(data: Seq[Dictionary]) extends Value {
-    def toBoolean = true
-    def toData = "?"
-    def children = data
+    def toBoolean: Boolean = true
+    def toData: String = "?"
+    def children: Seq[Dictionary] = data
   }
 
   case class PartialValue(partial: Handlebar) extends Value {
-    def toBoolean = true
-    def toData = "?"
-    def children = Nil
-    override def toString = "<partial>"
+    def toBoolean: Boolean = true
+    def toData: String = "?"
+    def children: Seq[Dictionary] = Nil
+    override def toString: String = "<partial>"
   }
 
   case object NoValue extends Value {
-    def toBoolean = false
-    def toData = ""
-    def children = Nil
+    def toBoolean: Boolean = false
+    def toData: String = ""
+    def children: Seq[Dictionary] = Nil
   }
 
   /**
    * Wrap generated code fragments in the form of Strings in a dictionary value.
    */
-  def codify(code: String): CodeFragment = CodeFragment(code)
+  def v(code: String): CodeFragment = CodeFragment(code)
+
   /**
    * Wrap a boolean flag in a dictionary value.
    */
@@ -87,7 +88,7 @@ object Dictionary {
    */
   def v(data: Handlebar): Value = PartialValue(data)
 
-  def apply(values: (String, Value)*) = new Dictionary ++= (values: _*)
+  def apply(values: (String, Value)*): Dictionary = new Dictionary ++= (values: _*)
 }
 
 case class Dictionary private(
@@ -96,7 +97,7 @@ case class Dictionary private(
 ) {
   import Dictionary._
 
-  override def toString = "Dictionary(parent=%s, map=%s)".format(parent.isDefined, map)
+  override def toString: String = "Dictionary(parent=%s, map=%s)".format(parent.isDefined, map)
 
   def this() = this(None, new mutable.HashMap())
 
@@ -109,28 +110,28 @@ case class Dictionary private(
     }.getOrElse(NoValue)
   }
 
-  def update(key: String, data: String) {
+  def update(key: String, data: String): Unit = {
     map(key) = CodeFragment(data)
   }
 
-  def update(key: String, data: Boolean) {
+  def update(key: String, data: Boolean): Unit = {
     map(key) = BooleanValue(data)
   }
 
-  def update(key: String, data: Seq[Dictionary]) {
+  def update(key: String, data: Seq[Dictionary]): Unit = {
     map(key) = ListValue(data)
   }
 
-  def update(key: String, data: Handlebar) {
+  def update(key: String, data: Handlebar): Unit = {
     map(key) = PartialValue(data)
   }
 
-  def ++=(values: (String, Value)*) = {
+  def ++=(values: (String, Value)*): Dictionary = {
     map ++= values.toMap
     this
   }
 
-  def +(dict: Dictionary) = {
+  def +(dict: Dictionary): Dictionary = {
     new Dictionary() ++= (this.map.toSeq: _*) ++= (dict.map.toSeq: _*)
   }
 }

@@ -4,41 +4,76 @@ private[this] object {{__stats_name}} {
   val FailuresCounter = scopedStats.scope("{{clientFuncNameForWire}}").counter("failures")
   val FailuresScope = scopedStats.scope("{{clientFuncNameForWire}}").scope("failures")
 }
-{{#headerInfo}}{{>header}}{{/headerInfo}} = {
+{{#functionInfo}}
+{{>function}} = {
   {{__stats_name}}.RequestsCounter.incr()
-  this.service(encodeRequest("{{clientFuncNameForWire}}", {{ArgsStruct}}({{argNames}}))) flatMap { response =>
-    val result = decodeResponse(response, {{ResultStruct}})
-    val exception: Future[Nothing] =
+  val inputArgs = {{funcObjectName}}.Args({{argNames}})
+  val replyDeserializer: Array[Byte] => _root_.com.twitter.util.Try[{{typeName}}] =
+    response => {
+      val decodeResult: _root_.com.twitter.util.Try[{{funcObjectName}}.Result] =
+        _root_.com.twitter.util.Try {
+          decodeResponse(response, {{funcObjectName}}.Result)
+        }
+
+      decodeResult match {
+        case t@_root_.com.twitter.util.Throw(_) =>
+          t.cast[{{typeName}}]
+        case  _root_.com.twitter.util.Return(result) =>
+          val serviceException: Throwable =
 {{#hasThrows}}
-      if (false)
-        null // can never happen, but needed to open a block
+            if (false)
+              null // can never happen, but needed to open a block
 {{#throws}}
-      else if (result.{{throwName}}.isDefined)
-        Future.exception(setServiceName(result.{{throwName}}.get))
+            else if (result.{{throwName}}.isDefined)
+              setServiceName(result.{{throwName}}.get)
 {{/throws}}
-      else
-        null
+            else
+              null
 {{/hasThrows}}
 {{^hasThrows}}
-      null
+            null
 {{/hasThrows}}
 
 {{#isVoid}}
-    if (exception != null) exception else Future.Done
+          if (serviceException != null) _root_.com.twitter.util.Throw(serviceException)
+          else _root_.com.twitter.util.Return.Unit
 {{/isVoid}}
 {{^isVoid}}
-    if (result.success.isDefined)
-      Future.value(result.success.get)
-    else if (exception != null)
-      exception
-    else
-      Future.exception(missingResult("{{clientFuncNameForWire}}"))
+          if (result.success.isDefined)
+            _root_.com.twitter.util.Return(result.success.get)
+          else if (serviceException != null)
+            _root_.com.twitter.util.Throw(serviceException)
+          else
+            _root_.com.twitter.util.Throw(missingResult("{{clientFuncNameForWire}}"))
 {{/isVoid}}
-  } respond {
-    case Return(_) =>
-      {{__stats_name}}.SuccessCounter.incr()
-    case Throw(ex) =>
-      {{__stats_name}}.FailuresCounter.incr()
-      {{__stats_name}}.FailuresScope.counter(ex.getClass.getName).incr()
+      }
+    }
+
+  val serdeCtx = new _root_.com.twitter.finagle.thrift.DeserializeCtx[{{typeName}}](inputArgs, replyDeserializer)
+  _root_.com.twitter.finagle.context.Contexts.local.let(
+    _root_.com.twitter.finagle.thrift.DeserializeCtx.Key,
+    serdeCtx
+  ) {
+    val serialized = encodeRequest("{{clientFuncNameForWire}}", inputArgs)
+    this.service(serialized).flatMap { response =>
+      Future.const(serdeCtx.deserialize(response))
+    }.respond { response =>
+      val responseClass = responseClassifier.applyOrElse(
+        ctfs.ReqRep(inputArgs, response),
+        ctfs.ResponseClassifier.Default)
+      responseClass match {
+        case ctfs.ResponseClass.Successful(_) =>
+          {{__stats_name}}.SuccessCounter.incr()
+        case ctfs.ResponseClass.Failed(_) =>
+          {{__stats_name}}.FailuresCounter.incr()
+          response match {
+            case Throw(ex) =>
+              setServiceName(ex)
+              {{__stats_name}}.FailuresScope.counter(Throwables.mkString(ex): _*).incr()
+            case _ =>
+          }
+      }
+    }
   }
 }
+{{/functionInfo}}

@@ -4,21 +4,12 @@ scala_library(
     name = 'scrooge-linter',
     repo = artifactory,
   ),
-  name='scala',
   dependencies=[
-    '3rdparty:libthrift-0.5.0',
+    '3rdparty/jvm/com/github/scopt',
     'scrooge/scrooge-generator',
     'util/util-logging',
+    '3rdparty/jvm/org/scala-lang/modules:scala-parser-combinators',
   ],
+  fatal_warnings=True,
   sources=globs('*.scala'),
-  resources=[
-    'scrooge/scrooge-linter/src/main/resources'
-  ],
-)
-
-jvm_binary(
-  name='bin',
-  basename='scrooge-linter',
-  main='com.twitter.scrooge.linter.Main',
-  dependencies=[':scala']
 )

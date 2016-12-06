@@ -1,0 +1,26 @@
+junit_tests(
+  dependencies=[
+    '3rdparty/jvm/org/jmock',
+    '3rdparty/jvm/junit',
+    '3rdparty/jvm/org/apache/thrift:libthrift-0.5.0',
+    '3rdparty/jvm/org/mockito:mockito-all',
+    '3rdparty/jvm/org/scalatest',
+    'scrooge/scrooge-core',
+    'scrooge/scrooge-generator',
+    '3rdparty/jvm/org/hamcrest:hamcrest-core',
+    '3rdparty/jvm/org/scala-lang/modules:scala-parser-combinators',
+    'finagle/finagle-thrift/src/main/java:java',
+    'util/util-core/src/main/scala:scala',
+  ],
+  sources=globs(
+    'com/twitter/scrooge/ASTSpec.scala',
+    'com/twitter/scrooge/TReusableMemoryTransportSpec.scala',
+    'com/twitter/scrooge/backend/GeneratorFactorySpec.scala',
+    'com/twitter/scrooge/frontend/*.scala',
+    'com/twitter/scrooge/goldfile/*.scala',
+    'com/twitter/scrooge/mustache/*.scala',
+    'com/twitter/scrooge/testutil/*.scala'),
+  resources=[
+    'scrooge/scrooge-generator-tests/src/test/resources:resources'
+  ],
+)

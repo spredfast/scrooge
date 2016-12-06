@@ -10,6 +10,11 @@ class FieldTypeController(fieldType: FunctionType, generator: ApacheJavaGenerato
   val type_name_in_container = generator.typeName(fieldType, inContainer = true)
   val type_name_in_container_skip_generic = generator.typeName(fieldType, inContainer = true, skipGeneric = true)
   val init_type_name = generator.typeName(fieldType, inInit = true)
+  def is_enum_set: Boolean = fieldType match {
+    case SetType(_: EnumType, _) => true
+    case _ => false
+  }
+  def init_field = generator.initField(fieldType)
   val nullable = generator.isNullableType(fieldType)
   val double = fieldType == TDouble
   val boolean = fieldType == TBool
@@ -42,12 +47,7 @@ class FieldTypeController(fieldType: FunctionType, generator: ApacheJavaGenerato
   val is_base_type_or_binary = is_base_type || fieldType == TBinary
   val is_base_type_not_string = is_base_type && fieldType != TString
   val is_struct = fieldType.isInstanceOf[StructType] // this can be a struct or an exception
-  val is_struct_not_exception = fieldType match {
-    case StructType(s, _) => !s.isInstanceOf[Exception_]
-    case _ => false
-  }
-
-  val is_struct_or_enum = is_struct_not_exception || fieldType.isInstanceOf[EnumType]
+  val is_struct_or_enum = is_struct || fieldType.isInstanceOf[EnumType]
   val is_void = fieldType == Void
 
   def get_type = {

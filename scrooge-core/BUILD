@@ -1,7 +1,11 @@
-maven_layout()
-
-jar_library(name='scrooge-core',
+target(
   dependencies=[
     'scrooge/scrooge-core/src/main/scala'
+  ]
+)
+
+target(name='tests',
+  dependencies=[
+    'scrooge/scrooge-core/src/test/scala'
   ]
 )

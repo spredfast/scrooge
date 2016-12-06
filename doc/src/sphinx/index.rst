@@ -5,7 +5,7 @@ Scrooge
    :class: floatingflask
 
 Scrooge is a `thrift <http://thrift.apache.org/>`_ code generator written in
-Scala, which currently generates code for Scala and Java.
+Scala, which currently generates code for Scala, Java, Cocoa, Android and Lua.
 
 It's meant to be a replacement for the apache thrift code generator, and
 generates conforming, binary-compatible codecs by building on top of
@@ -31,7 +31,7 @@ Features
 
 - Finagle client/server adaptors can be optionally generated at the same time.
 
-- Has a plugable backend providing a dynamic way to add more generator targets.
+- Has a pluggable backend providing a dynamic way to add more generator targets.
 
 Using Scrooge
 -------------
@@ -44,15 +44,15 @@ Maven users need to add the following to the pom.xml file:
 
     <dependency>
       <groupId>com.twitter</groupId>
-      <artifactId>scrooge-core_2.9.2</artifactId>
-      <version>3.3.2</version>
+      <artifactId>scrooge-core_2.11</artifactId>
+      <version>4.6.0</version>
     </dependency>
 
 SBT users need this:
 
 ::
 
-    val scroogeCore = "com.twitter" %% "scrooge-core" % "3.3.2"
+    val scroogeCore = "com.twitter" %% "scrooge-core" % "4.6.0"
 
 Building Scrooge
 ----------------
@@ -61,7 +61,15 @@ To build scrooge, use sbt:
 
 ::
 
-    $ ./sbt +publish-local
+    $ ./sbt publishLocal
+
+This will currently not build and publish the scrooge-sbt-plugin.
+You can still build the scrooge-sbt-plugin separately by executing:
+
+::
+    $ ./sbt
+    > project scrooge-sbt-plugin
+    > publishLocal
 
 User's guide
 ------------
@@ -74,8 +82,8 @@ User's guide
    MVNPlugin
    CommandLine
    Finagle
-   Ostrich
    CodeGenDep
+   GeneratedCodeUsage
    Semantics
    Linter
 

@@ -16,68 +16,90 @@ package com.twitter.scrooge.backend
  * limitations under the License.
  */
 
-import java.io.{OutputStreamWriter, FileOutputStream, File}
-import scala.collection.mutable
-import com.twitter.scrooge.mustache.HandlebarLoader
+import com.twitter.scrooge.android_generator.AndroidGeneratorFactory
 import com.twitter.scrooge.ast._
-import com.twitter.scrooge.mustache.Dictionary
+import com.twitter.scrooge.backend.lua.LuaGeneratorFactory
+import com.twitter.scrooge.frontend.{ResolvedDocument, ScroogeInternalException}
 import com.twitter.scrooge.java_generator.ApacheJavaGeneratorFactory
+import com.twitter.scrooge.mustache.{Dictionary, HandlebarLoader}
+import java.io.{File, FileOutputStream, OutputStreamWriter}
 import scala.collection.JavaConverters._
-import com.twitter.scrooge.frontend.{ScroogeInternalException, ResolvedDocument}
-import com.twitter.finagle.util.LoadService
+import scala.collection.mutable
 
 abstract sealed class ServiceOption
 
 case object WithFinagle extends ServiceOption
 case class JavaService(service: Service, options: Set[ServiceOption])
 
-trait ThriftGenerator {
+abstract class Generator(doc: ResolvedDocument) {
   def apply(
-    _doc: Document,
     serviceOptions: Set[ServiceOption],
     outputPath: File,
-    dryRun: Boolean = false): Iterable[File]
+    dryRun: Boolean = false
+  ): Iterable[File]
+
+  /**
+   * Used to find the namespace in included files.
+   * This does not need to match the corresponding GeneratorFactory.language.
+   */
+  def namespaceLanguage: String
+
+  def includeMap: Map[String, ResolvedDocument] = doc.resolver.includeMap
 }
 
 object GeneratorFactory {
   private[this] val factories: Map[String, GeneratorFactory] = {
-    val loadedGenerators = LoadService[GeneratorFactory]()
+    val klass = classOf[GeneratorFactory]
+    val loadedGenerators = java.util.ServiceLoader.load(klass, klass.getClassLoader).iterator.asScala
     val factories =
-      List(JavaGeneratorFactory, ScalaGeneratorFactory, ApacheJavaGeneratorFactory) ++
+      List(
+        ScalaGeneratorFactory,
+        ApacheJavaGeneratorFactory,
+        AndroidGeneratorFactory,
+        CocoaGeneratorFactory,
+        LuaGeneratorFactory
+      ) ++
       loadedGenerators
 
-    (factories map { g => (g.lang -> g) }).toMap
+    factories.map { g => (g.language -> g) }.toMap
   }
 
   def languages = factories.keys
 
   def apply(
     lan: String,
-    includeMap: Map[String, ResolvedDocument],
+    doc: ResolvedDocument,
     defaultNamespace: String,
     experimentFlags: Seq[String]
-  ): ThriftGenerator = factories.get(lan) match {
-    case Some(factory) => factory(includeMap, defaultNamespace, experimentFlags)
+  ): Generator = factories.get(lan) match {
+    case Some(factory) => factory(doc, defaultNamespace, experimentFlags)
     case None => throw new Exception("Generator for language \"%s\" not found".format(lan))
   }
 }
 
 trait GeneratorFactory {
-  def lang: String
+  /**
+   * Command line language matches on this.
+   */
+  def language: String
   def apply(
-    includeMap: Map[String, ResolvedDocument],
+    doc: ResolvedDocument,
     defaultNamespace: String,
     experimentFlags: Seq[String]
-  ): ThriftGenerator
+  ): Generator
 }
 
-trait Generator extends ThriftGenerator {
+abstract class TemplateGenerator(val resolvedDoc: ResolvedDocument)
+  extends Generator(resolvedDoc)
+  with StructTemplate
+  with ServiceTemplate
+  with ConstsTemplate
+  with EnumTemplate {
   import Dictionary._
 
   /**
    * Map from included file names to the namespaces defined in those files.
    */
-  val includeMap: Map[String, ResolvedDocument]
   val defaultNamespace: String
   val experimentFlags: Seq[String]
 
@@ -88,16 +110,51 @@ trait Generator extends ThriftGenerator {
     file
   }
 
-  protected def getIncludeNamespace(includeFileName: String): Identifier = {
-    val javaNamespace = includeMap.get(includeFileName).flatMap {
-      doc: ResolvedDocument => doc.document.namespace("java")
-    }
-    javaNamespace.getOrElse(SimpleID(defaultNamespace))
-  }
+  protected def getIncludeNamespace(includeFileName: String): Identifier =
+    includeMap
+      .get(includeFileName)
+      .map { doc: ResolvedDocument =>
+        getNamespace(doc.document)
+      }.getOrElse(SimpleID(defaultNamespace))
 
-  def normalizeCase[N <: Node](node: N): N
   def getNamespace(doc: Document): Identifier =
-    doc.namespace("java") getOrElse (SimpleID(defaultNamespace))
+    doc.namespace(namespaceLanguage).getOrElse(SimpleID(defaultNamespace))
+
+  def normalizeCase[N <: Node](node: N): N = {
+    (node match {
+      case d: Document =>
+        d.copy(defs = d.defs.map(normalizeCase))
+      case id: Identifier => id.toTitleCase
+      case e: EnumRHS =>
+        e.copy(normalizeCase(e.enum), normalizeCase(e.value))
+      case f: Field =>
+        f.copy(
+          sid = f.sid.toCamelCase,
+          default = f.default.map(normalizeCase))
+      case f: Function =>
+        f.copy(
+          funcName = f.funcName.toCamelCase,
+          args = f.args.map(normalizeCase),
+          throws = f.throws.map(normalizeCase))
+      case c: ConstDefinition =>
+        c.copy(value = normalizeCase(c.value))
+      case e: Enum =>
+        e.copy(values = e.values.map(normalizeCase))
+      case e: EnumField =>
+        e.copy(sid = e.sid.toTitleCase)
+      case s: Struct =>
+        s.copy(fields = s.fields.map(normalizeCase))
+      case f: FunctionArgs =>
+        f.copy(fields = f.fields.map(normalizeCase))
+      case f: FunctionResult =>
+        f.copy(success = f.success.map(normalizeCase), exceptions = f.exceptions.map(normalizeCase))
+      case e: Exception_ =>
+        e.copy(fields = e.fields.map(normalizeCase))
+      case s: Service =>
+        s.copy(functions = s.functions.map(normalizeCase))
+      case n => n
+    }).asInstanceOf[N]
+  }
 
   def quote(str: String) = "\"" + str + "\""
   def quoteKeyword(str: String): String
@@ -107,26 +164,11 @@ trait Generator extends ThriftGenerator {
         case TBool | TByte | TI16 | TI32 | TI64 | TDouble => false
         case _ => true
       }
-      )
+    )
   }
 
-  /**
-   * Generates a prefix and suffix to wrap around a field expression that will
-   * convert the value to a mutable equivalent.
-   */
-  def toMutable(t: FieldType): (String, String)
-
-  /**
-   * Generates a prefix and suffix to wrap around a field expression that will
-   * convert the value to a mutable equivalent.
-   */
-  def toMutable(f: Field): (String, String)
-
-  /**
-   * get the ID of a service parent.  Java and Scala implementations are different.
-   */
   def getServiceParentID(parent: ServiceParent): Identifier = {
-    val identifier: Identifier with Product = parent.prefix match {
+    val identifier: Identifier = parent.filename match {
       case Some(scope) => parent.sid.addScope(getIncludeNamespace(scope.name))
       case None => parent.sid
     }
@@ -139,6 +181,14 @@ trait Generator extends ThriftGenerator {
   def isPrimitive(t: FunctionType): Boolean = {
     t match {
       case Void | TBool | TByte | TI16 | TI32 | TI64 | TDouble => true
+      case _ => false
+    }
+  }
+
+  def isLazyReadEnabled(t: FunctionType, optional: Boolean): Boolean = {
+    t match {
+      case TString => true
+      case Void | TBool | TByte | TI16 | TI32 | TI64 | TDouble => optional
       case _ => false
     }
   }
@@ -157,54 +207,64 @@ trait Generator extends ThriftGenerator {
 
   // methods that convert AST nodes to CodeFragment
   def genID(data: Identifier): CodeFragment = data match {
-    case SimpleID(name, _) => codify(quoteKeyword(name))
-    case QualifiedID(names) => codify(names.map { quoteKeyword(_) }.mkString("."))
+    case SimpleID(name, _) => v(quoteKeyword(name))
+    case QualifiedID(names) => v(names.map(quoteKeyword).mkString("."))
   }
 
-  def genConstant(constant: RHS, mutable: Boolean = false, fieldType: Option[FieldType] = None): CodeFragment = {
+  // Add namespace if id is unqualified.
+  def genQualifiedID(id: Identifier, namespace: Identifier): CodeFragment =
+    id match {
+      case sid: SimpleID => genID(sid.addScope(namespace))
+      case qid: QualifiedID => genID(qid)
+    }
+
+  def genConstant(constant: RHS, fieldType: Option[FieldType] = None): CodeFragment = {
     constant match {
-      case NullLiteral => codify("null")
-      case StringLiteral(value) => codify(quote(value))
-      case DoubleLiteral(value) => codify(value.toString)
-      case IntLiteral(value) => codify(value.toString)
-      case BoolLiteral(value) => codify(value.toString)
-      case c@ListRHS(_) => genList(c, mutable)
-      case c@SetRHS(_) => genSet(c, mutable)
-      case c@MapRHS(_) => genMap(c, mutable)
+      case NullLiteral => v("null")
+      case StringLiteral(value) => v(quote(value))
+      case DoubleLiteral(value) => v(value.toString)
+      case IntLiteral(value) => v(value.toString)
+      case BoolLiteral(value) => v(value.toString)
+      case c@ListRHS(_) => genList(c, fieldType)
+      case c@SetRHS(_) => genSet(c, fieldType)
+      case c@MapRHS(_) => genMap(c, fieldType)
       case c: EnumRHS => genEnum(c, fieldType)
       case iv@IdRHS(id) => genID(id)
-      case s: StructRHS => genStruct(s)
+      case s: StructRHS => genStruct(s, fieldType)
+      case u: UnionRHS => genUnion(u, fieldType)
     }
   }
 
-  def genList(list: ListRHS, mutable: Boolean = false): CodeFragment
+  def genList(list: ListRHS, fieldType: Option[FieldType] = None): CodeFragment
 
-  def genSet(set: SetRHS, mutable: Boolean = false): CodeFragment
+  def genSet(set: SetRHS, fieldType: Option[FieldType] = None): CodeFragment
 
-  def genMap(map: MapRHS, mutable: Boolean = false): CodeFragment
+  def genMap(map: MapRHS, fieldType: Option[FieldType] = None): CodeFragment
 
   def genEnum(enum: EnumRHS, fieldType: Option[FieldType] = None): CodeFragment
 
-  def genStruct(struct: StructRHS): CodeFragment
+  def genStruct(struct: StructRHS, fieldType: Option[FieldType] = None): CodeFragment
+
+  def genUnion(union: UnionRHS, fieldType: Option[FieldType] = None): CodeFragment
 
   /**
    * The default value for the specified type and mutability.
    */
-  def genDefaultValue(fieldType: FieldType, mutable: Boolean = false): CodeFragment = {
+  def genDefaultValue(fieldType: FieldType): CodeFragment = {
     val code = fieldType match {
       case TBool => "false"
       case TByte | TI16 | TI32 => "0"
       case TDouble => "0.0"
       case _ => "null"
     }
-    codify(code)
+    v(code)
   }
 
   def genDefaultFieldValue(f: Field): Option[CodeFragment] = {
     if (f.requiredness.isOptional) {
       None
     } else {
-      f.default.map(genConstant(_, false, Some(f.fieldType))) orElse {
+      f.default.map(genConstant(_, Some(f.fieldType))).orElse {
         if (f.fieldType.isInstanceOf[ContainerType]) {
           Some(genDefaultValue(f.fieldType))
         } else {
@@ -214,11 +274,8 @@ trait Generator extends ThriftGenerator {
     }
   }
 
-  def genDefaultReadValue(f: Field): CodeFragment = {
-    genDefaultFieldValue(f).getOrElse {
-      genDefaultValue(f.fieldType, false)
-    }
-  }
+  def genDefaultReadValue(f: Field): CodeFragment =
+    genDefaultFieldValue(f).getOrElse(genDefaultValue(f.fieldType))
 
   def genConstType(t: FunctionType): CodeFragment = {
     val code = t match {
@@ -238,16 +295,17 @@ trait Generator extends ThriftGenerator {
       case ListType(_, _) => "LIST"
       case x => throw new InternalError("constType#" + t)
     }
-    codify(code)
+    v(code)
   }
 
   /**
    * When a named type is imported via include statement, we need to
    * qualify it using its full namespace
    */
-  def qualifyNamedType(t: NamedType): Identifier =
+  def qualifyNamedType(t: NamedType, namespace: Option[Identifier] = None): Identifier =
     t.scopePrefix match {
       case Some(scope) => t.sid.addScope(getIncludeNamespace(scope.name))
+      case None if namespace.isDefined => t.sid.addScope(namespace.get)
       case None => t.sid
     }
 
@@ -263,7 +321,37 @@ trait Generator extends ThriftGenerator {
       case TBinary => "readBinary"
       case x => throw new ScroogeInternalException("protocolReadMethod#" + t)
     }
-    codify(code)
+    v(code)
+  }
+
+  def genOffsetSkipProtocolMethod(t: FunctionType): CodeFragment = {
+    val code = t match {
+      case TBool => "offsetSkipBool"
+      case TByte => "offsetSkipByte"
+      case TI16 => "offsetSkipI16"
+      case TI32 => "offsetSkipI32"
+      case TI64 => "offsetSkipI64"
+      case TDouble => "offsetSkipDouble"
+      case TString => "offsetSkipString"
+      case TBinary => "offsetSkipBinary"
+      case x => s"""Invalid type passed($x) for genOffsetSkipProtocolMethod method. Compile will fail here."""
+    }
+    v(code)
+  }
+
+  def genDecodeProtocolMethod(t: FunctionType): CodeFragment = {
+    val code = t match {
+      case TBool => "decodeBool"
+      case TByte => "decodeByte"
+      case TI16 => "decodeI16"
+      case TI32 => "decodeI32"
+      case TI64 => "decodeI64"
+      case TDouble => "decodeDouble"
+      case TString => "decodeString"
+      case TBinary => "decodeBinary"
+      case x => s"""Invalid type passed ($x) for genDecodeProtocolMethod method. Compile will fail here."""
+    }
+    v(code)
   }
 
   def genProtocolWriteMethod(t: FunctionType): CodeFragment = {
@@ -278,26 +366,14 @@ trait Generator extends ThriftGenerator {
       case TBinary => "writeBinary"
       case x => throw new ScroogeInternalException("protocolWriteMethod#" + t)
     }
-    codify(code)
+    v(code)
   }
 
-  /**
-   * Generates a suffix to append to a field expression that will
-   * convert the value to an immutable equivalent.
-   */
-  def genToImmutable(t: FieldType): CodeFragment
+  def genType(t: FunctionType): CodeFragment
 
-  /**
-   * Generates a suffix to append to a field expression that will
-   * convert the value to an immutable equivalent.
-   */
-  def genToImmutable(f: Field): CodeFragment
+  def genPrimitiveType(t: FunctionType): CodeFragment
 
-  def genType(t: FunctionType, mutable: Boolean = false): CodeFragment
-
-  def genPrimitiveType(t: FunctionType, mutable: Boolean = false): CodeFragment
-
-  def genFieldType(f: Field, mutable: Boolean = false): CodeFragment
+  def genFieldType(f: Field): CodeFragment
 
   def genFieldParams(fields: Seq[Field], asVal: Boolean = false): CodeFragment
 
@@ -316,29 +392,22 @@ trait Generator extends ThriftGenerator {
     Set[ServiceOption]
   ): Option[File] =
     None
-}
 
-trait TemplateGenerator extends Generator
-  with StructTemplate
-  with ServiceTemplate
-  with ConstsTemplate
-  with EnumTemplate
-{
+
   def templates: HandlebarLoader
   def fileExtension: String
 
   def apply(
-    _doc: Document,
     serviceOptions: Set[ServiceOption],
     outputPath: File,
     dryRun: Boolean = false
   ): Iterable[File] = {
     val generatedFiles = new mutable.ListBuffer[File]
-    val doc = normalizeCase(_doc)
-    val namespace = getNamespace(_doc)
+    val doc = normalizeCase(resolvedDoc.document)
+    val namespace = getNamespace(resolvedDoc.document)
     val packageDir = namespacedFolder(outputPath, namespace.fullName, dryRun)
     val includes = doc.headers.collect {
-      case x@ Include(_, doc) => x
+      case x@Include(_, _) => x
     }
 
     if (doc.consts.nonEmpty) {
@@ -371,7 +440,7 @@ trait TemplateGenerator extends Generator
               case _ => "struct"
             }
 
-          val dict = structDict(struct, Some(namespace), includes, serviceOptions)
+          val dict = structDict(struct, Some(namespace), includes, serviceOptions, true)
           writeFile(file, templates.header, templates(templateName).generate(dict))
         }
         generatedFiles += file
@@ -403,5 +472,20 @@ trait TemplateGenerator extends Generator
     }
 
     generatedFiles
+  }
+
+  /**
+   * Returns a String "scala.Product${N}[Type1, Type2, ...]" or "scala.Product".
+   */
+  def productN(fields: Seq[Field], namespace: Option[Identifier]): String = {
+    val arity = fields.length
+    if (arity >= 1 && arity <= 22) {
+      val fieldTypes = fields.map { f =>
+        genFieldType(f).toData
+      }.mkString(", ")
+      s"scala.Product$arity[$fieldTypes]"
+    } else {
+      "scala.Product"
+    }
   }
 }

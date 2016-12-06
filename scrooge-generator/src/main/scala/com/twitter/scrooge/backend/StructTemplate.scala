@@ -35,7 +35,7 @@ trait StructTemplate { self: TemplateGenerator =>
       "isBase" -> v(false))
 
   def genWireConstType(t: FunctionType): CodeFragment = t match {
-    case _: EnumType => codify("I32")
+    case _: EnumType => v("I32")
     case _ => genConstType(t)
   }
 
@@ -44,6 +44,7 @@ trait StructTemplate { self: TemplateGenerator =>
       case t: ListType =>
         val elt = sid.append("_element")
         TypeTemplate + Dictionary(
+          "fieldType" -> genType(t),
           "isList" -> v(Dictionary(
             "name" -> genID(sid),
             "eltName" -> genID(elt),
@@ -55,18 +56,21 @@ trait StructTemplate { self: TemplateGenerator =>
       case t: SetType =>
         val elt =  sid.append("_element")
         TypeTemplate + Dictionary(
+          "fieldType" -> genType(t),
           "isSet" -> v(Dictionary(
             "name" -> genID(sid),
             "eltName" -> genID(elt),
             "eltConstType" -> genConstType(t.eltType),
             "eltWireConstType" -> genWireConstType(t.eltType),
             "eltType" -> genType(t.eltType),
+            "isEnumSet" -> v(t.eltType.isInstanceOf[EnumType]),
             "eltReadWriteInfo" -> v(readWriteInfo(elt, t.eltType))
           )))
       case t: MapType =>
         val key =  sid.append("_key")
         val value =  sid.append("_value")
         TypeTemplate + Dictionary(
+          "fieldType" -> genType(t),
           "isMap" -> v(Dictionary(
             "name" -> genID(sid),
             "keyConstType" -> genConstType(t.keyType),
@@ -82,18 +86,25 @@ trait StructTemplate { self: TemplateGenerator =>
           )))
       case t: StructType =>
         TypeTemplate + Dictionary(
+          "isNamedType" -> v(true),
+          "isImported" -> v(t.scopePrefix.isDefined),
+          "fieldType" -> genType(t),
           "isStruct" -> v(Dictionary(
-            "name" -> genID(sid),
-            "fieldType" -> genType(t)
+            "name" -> genID(sid)
           )))
       case t: EnumType =>
         TypeTemplate + Dictionary(
+          "isNamedType" -> v(true),
+          "isImported" -> v(t.scopePrefix.isDefined),
+          "fieldType" -> {
+            genType(t.copy(enum = t.enum.copy(t.enum.sid.toTitleCase)))
+          },
           "isEnum" -> v(Dictionary(
-            "name" -> genID(sid),
-            "fieldType" -> genType(t)
+            "name" -> genID(sid)
           )))
       case t: BaseType =>
         TypeTemplate + Dictionary(
+          "fieldType" -> genType(t),
           "isBase" -> v(Dictionary(
             "type" -> genType(t),
             "name" -> genID(sid),
@@ -105,13 +116,23 @@ trait StructTemplate { self: TemplateGenerator =>
     }
   }
 
-  def fieldsToDict(fields: Seq[Field], blacklist: Seq[String]) = {
+  def fieldsToDict(
+    fields: Seq[Field],
+    blacklist: Seq[String],
+    namespace: Option[Identifier] = None
+  ): Seq[Dictionary] = {
     fields.zipWithIndex map {
       case (field, index) =>
         val valueVariableID = field.sid.append("_item")
+        val fieldName = genID(field.sid)
+        val camelCaseFieldName = if (fieldName.toString.indexOf('_') >= 0)
+          genID(field.sid.toCamelCase)
+        else
+          NoValue
+
         Dictionary(
-          "index" -> codify(index.toString),
-          "indexP1" -> codify((index + 1).toString),
+          "index" -> v(index.toString),
+          "indexP1" -> v((index + 1).toString),
           "_fieldName" -> genID(field.sid.prepend("_")), // for Java only
           "unsetName" -> genID(field.sid.toTitleCase.prepend("unset")),
           "readName" -> genID(field.sid.toTitleCase.prepend("read")),
@@ -119,18 +140,20 @@ trait StructTemplate { self: TemplateGenerator =>
           "readBlobName" -> genID(field.sid.toTitleCase.prepend("read").append("Blob")),
           "getName" -> genID(field.sid.toTitleCase.prepend("get")), // for Java only
           "isSetName" -> genID(field.sid.toTitleCase.prepend("isSet")), // for Java only
-          "fieldName" -> genID(field.sid),
-          "fieldNameForWire" -> codify(field.originalName),
+          "fieldName" -> fieldName,
+          "fieldNameForWire" -> v(field.originalName),
+          "fieldNameCamelCase" -> camelCaseFieldName,
           "newFieldName" -> genID(field.sid.toTitleCase.prepend("new")),
           "FieldName" -> genID(field.sid.toTitleCase),
           "FIELD_NAME" -> genID(field.sid.toUpperCase),
           "gotName" -> genID(field.sid.prepend("_got_")),
-          "id" -> codify(field.index.toString),
+          "id" -> v(field.index.toString),
           "fieldConst" -> genID(field.sid.toTitleCase.append("Field")),
           "constType" -> genConstType(field.fieldType),
           "isPrimitive" -> v(isPrimitive(field.fieldType)),
-          "primitiveFieldType" -> genPrimitiveType(field.fieldType, mutable = false),
-          "fieldType" -> genType(field.fieldType, mutable = false),
+          "isLazyReadEnabled" -> v(isLazyReadEnabled(field.fieldType, field.requiredness.isOptional)),
+          "primitiveFieldType" -> genPrimitiveType(field.fieldType),
+          "fieldType" -> genType(field.fieldType),
           "fieldKeyType" -> v(field.fieldType match {
             case MapType(keyType, _, _) => Some(genType(keyType))
             case _ => None
@@ -141,8 +164,8 @@ trait StructTemplate { self: TemplateGenerator =>
             case SetType(valueType, _) => Some(genType(valueType))
             case _ => None
           }),
-          "fieldTypeAnnotations" -> v(StructTemplate.renderPairs(field.typeAnnotations)),
-          "fieldFieldAnnotations" -> v(StructTemplate.renderPairs(field.fieldAnnotations)),
+          "fieldTypeAnnotations" -> StructTemplate.renderPairs(field.typeAnnotations),
+          "fieldFieldAnnotations" -> StructTemplate.renderPairs(field.fieldAnnotations),
           "isImported" -> v(field.fieldType match {
             case n: NamedType => n.scopePrefix.isDefined
             case _ => false
@@ -175,7 +198,7 @@ trait StructTemplate { self: TemplateGenerator =>
               case ListType(eltType, _) => List(genType(eltType))
               case SetType(eltType, _) => List(genType(eltType))
               case MapType(keyType, valueType, _) => List(
-                codify("(" + genType(keyType).toData + ", " + genType(valueType).toData + ")"))
+                v("(" + genType(keyType).toData + ", " + genType(valueType).toData + ")"))
               case _ => Nil
             }) map { t => Dictionary("elementType" -> t) }
           },
@@ -183,7 +206,10 @@ trait StructTemplate { self: TemplateGenerator =>
           "writeFieldName" -> genID(field.sid.toTitleCase.prepend("write").append("Field")),
           "writeFieldValueName" -> genID(field.sid.toTitleCase.prepend("write").append("Value")),
           "readField" -> v(templates("readField")),
+          "decodeProtocol" -> genDecodeProtocolMethod(field.fieldType),
+          "offsetSkipProtocol" -> genOffsetSkipProtocolMethod(field.fieldType),
           "readUnionField" -> v(templates("readUnionField")),
+          "readLazyField" -> v(templates("readLazyField")),
           "readValue" -> v(templates("readValue")),
           "writeField" -> v(templates("writeField")),
           "writeValue" -> v(templates("writeValue")),
@@ -202,14 +228,6 @@ trait StructTemplate { self: TemplateGenerator =>
           "optionalType" -> v(templates("optionalType")),
           "withoutPassthrough" -> v(templates("withoutPassthrough")),
           "readWriteInfo" -> v(readWriteInfo(valueVariableID, field.fieldType)),
-          "toImmutable" -> genToImmutable(field),
-          "toMutable" -> v {
-            toMutable(field) match {
-              case (prefix, suffix) => Seq(Dictionary(
-                "prefix" -> codify(prefix),
-                "suffix" -> codify(suffix)))
-            }
-          },
           "valueVariableName" -> genID(valueVariableID)
         )
     }
@@ -248,103 +266,115 @@ trait StructTemplate { self: TemplateGenerator =>
   }
 
   private def exceptionMsgFieldName(struct: StructLike): Option[SimpleID] = {
-    val msgField: Option[Field] = struct.fields find {
-      field =>
+    val msgField: Option[Field] = struct.fields.find { field =>
       // 1st choice: find a field called message
-        field.sid.name == "message"
-    } orElse {
+      field.sid.name == "message"
+    }.orElse {
       // 2nd choice: the first string field
-      struct.fields find {
+      struct.fields.find {
         field => field.fieldType == TString
       }
     }
 
-    msgField map {
-      _.sid
+    msgField.map { _.sid }
+  }
+
+  def getSuccessType(result: FunctionResult): CodeFragment =
+    result.success match {
+      case Some(field) => genType(field.fieldType)
+      case None => v("Unit")
     }
+
+  def getSuccessValue(result: FunctionResult): CodeFragment =
+    result.success match {
+      case Some(field) => v("success")
+      case None => v("Some(Unit)")
+    }
+
+  def getExceptionFields(result: FunctionResult): CodeFragment = {
+    val exceptions = result.exceptions.map { field: Field => genID(field.sid).toData }.mkString(", ")
+    v(s"Seq($exceptions)")
   }
 
   def structDict(
     struct: StructLike,
     namespace: Option[Identifier],
     includes: Seq[Include],
-    serviceOptions: Set[ServiceOption]
-  ) = {
+    serviceOptions: Set[ServiceOption],
+    toplevel: Boolean = false // True if this struct is defined in its own file. False for internal structs.
+  ): Dictionary = {
+    val parentType = struct match {
+      case e: Exception_ if (serviceOptions contains WithFinagle) =>
+        "ThriftException with com.twitter.finagle.SourcedException with ThriftStruct"
+      case e: Exception_ => "ThriftException with ThriftStruct"
+      case u: Union => "ThriftUnion\n  with ThriftStruct"
+      case result: FunctionResult =>
+        val resultType = getSuccessType(result)
+        s"ThriftResponse[$resultType] with ThriftStruct"
+      case _ => "ThriftStruct"
+    }
+    val arity = struct.fields.size
+
     val isStruct = struct.isInstanceOf[Struct]
     val isException = struct.isInstanceOf[Exception_]
     val isUnion = struct.isInstanceOf[Union]
-    val parentType =
-      if (isException) {
-        if (serviceOptions contains WithFinagle) {
-          "ThriftException with com.twitter.finagle.SourcedException with ThriftStruct"
-        } else {
-          "ThriftException with ThriftStruct"
-        }
-      } else if (isUnion) {
-        "ThriftUnion with ThriftStruct"
-      } else {
-        "ThriftStruct"
-      }
-    val arity = struct.fields.size
-    val product = if (arity >= 1 && arity <= 22) {
-      val fieldTypes = struct.fields.map {
-        f => genFieldType(f).toData
-      }.mkString(", ")
-      "scala.Product" + arity + "[" + fieldTypes + "]"
-    } else {
-      "scala.Product"
-    }
+    val isResponse = struct.isInstanceOf[FunctionResult]
 
-    val exceptionMsgField: Option[SimpleID] = if (isException) exceptionMsgFieldName(struct) else None
+    val exceptionMsgField: Option[SimpleID] =
+      if (isException) exceptionMsgFieldName(struct) else None
 
     val fieldDictionaries = fieldsToDict(
       struct.fields,
-      if (isException) Seq("message") else Seq())
+      if (isException) Seq("message") else Nil,
+      namespace
+    )
 
-    val isPublic = namespace.isDefined
-    val structName = if (isPublic) genID(struct.sid.toTitleCase) else genID(struct.sid)
+    val structName = if (toplevel) genID(struct.sid.toTitleCase) else genID(struct.sid)
 
     Dictionary(
-      "public" -> v(isPublic),
-      "package" -> namespace.map{ genID(_) }.getOrElse(codify("")),
-      "docstring" -> codify(struct.docstring.getOrElse("")),
-      "parentType" -> codify(parentType),
+      "public" -> v(toplevel),
+      "package" -> namespace.map(genID).getOrElse(v("")),
+      "docstring" -> v(struct.docstring.getOrElse("")),
+      "parentType" -> v(parentType),
       "fields" -> v(fieldDictionaries),
-      "defaultFields" -> v(fieldsToDict(struct.fields.filter(!_.requiredness.isOptional), Seq())),
+      "defaultFields" -> v(fieldsToDict(struct.fields.filter(!_.requiredness.isOptional), Nil)),
       "alternativeConstructor" -> v(
-        struct.fields.exists(_.requiredness.isOptional) && struct.fields.exists(_.requiredness.isDefault)),
-      "StructNameForWire" -> codify(struct.originalName),
+        struct.fields.exists(_.requiredness.isOptional)
+        && struct.fields.exists(_.requiredness.isDefault)),
+      "StructNameForWire" -> v(struct.originalName),
       "StructName" ->
-        // if isPublic, the struct comes from a Thrift definition. Otherwise
-        // it's an internal struct: fooMethod$args or fooMethod$result
         structName,
-      "InstanceClassName" -> (if (isStruct) codify("Immutable") else structName),
+      "InstanceClassName" -> (if (isStruct) v("Immutable") else structName),
       "underlyingStructName" -> genID(struct.sid.prepend("_underlying_")),
-      "arity" -> codify(arity.toString),
+      "arity" -> v(arity.toString),
       "isException" -> v(isException),
+      "isResponse" -> v(isResponse),
       "hasExceptionMessage" -> v(exceptionMsgField.isDefined),
-      "exceptionMessageField" -> exceptionMsgField.map { genID(_) }.getOrElse { codify("")},
-      "product" -> codify(product),
+      "exceptionMessageField" -> exceptionMsgField.map(genID).getOrElse { v("")},
+      "product" -> v(productN(struct.fields, namespace)),
       "arity0" -> v(arity == 0),
       "arity1" -> v((if (arity == 1) fieldDictionaries.take(1) else Nil)),
       "arityN" -> v(arity > 1 && arity <= 22),
       "withFieldGettersAndSetters" -> v(isStruct || isException),
       "withTrait" -> v(isStruct),
-      "structAnnotations" -> v(StructTemplate.renderPairs(struct.annotations))
+      "structAnnotations" -> StructTemplate.renderPairs(struct.annotations)
     )
   }
 }
 
 object StructTemplate {
+
   /**
    * Renders a map as:
    *   Dictionary("pairs" -> ListValue(Seq(Dictionary("key" -> ..., "value" -> ...)))
    */
-  def renderPairs(pairs: Map[String, String]): Dictionary = {
-    val pairDicts: Seq[Dictionary] = (pairs.map { kv =>
-      Dictionary("key" -> codify(kv._1), "value" -> codify(kv._2))
-    } toSeq)
-    Dictionary("pairs" -> v(pairDicts))
+  private def renderPairs(pairs: Map[String, String]): Dictionary.Value = {
+    if (pairs.isEmpty) {
+      NoValue
+    } else {
+      val pairDicts: Seq[Dictionary] =
+        pairs.map { case (key, value) => Dictionary("key" -> v(key), "value" -> v(value)) }.toSeq
+      v(Dictionary("pairs" -> v(pairDicts)))
+    }
   }
 }
-

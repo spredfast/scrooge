@@ -45,19 +45,32 @@ class PrintConstController(
           Map("value" -> renderedValue.value, "rendered_value" -> renderedValue.rendered)
         }
       }
-      case _ => throw new ScroogeInternalException("Invalid state PrintConstController")
+      case _ => throw new ScroogeInternalException(s"Invalid state PrintConstController '$value'")
     }
   }
 
-  def struct_values = {
-    val values = value.asInstanceOf[StructRHS].elems
-    val structType = fieldType.asInstanceOf[StructType]
-    for {
-      f <- structType.struct.fields
-      v <- values.get(f)
-    } yield {
-      val renderedValue = renderConstValue(v, f.fieldType)
-      Map("key" -> f.sid.name, "value" -> renderedValue.value, "rendered_value" -> renderedValue.rendered)
+  def struct_values: Seq[Map[String, String]] = {
+    value match {
+      case struct: StructRHS =>
+        val values = value.asInstanceOf[StructRHS].elems
+        val structType = fieldType.asInstanceOf[StructType]
+        for {
+          f <- structType.struct.fields
+          v <- values.get(f)
+        } yield {
+          val renderedValue = renderConstValue(v, f.fieldType)
+          Map(
+            "key" -> f.sid.name,
+            "value" -> renderedValue.value,
+            "rendered_value" -> renderedValue.rendered)
+        }
+      case union: UnionRHS =>
+        val renderedValue = renderConstValue(union.initializer, union.field.fieldType)
+        Seq(Map(
+          "key" -> union.field.sid.name,
+          "value" -> renderedValue.value,
+          "rendered_value" -> renderedValue.rendered))
+      case _ => throw new ScroogeInternalException(s"Invalid state PrintConstController '$value'")
     }
   }
 
@@ -106,7 +119,9 @@ class PrintConstController(
         if (namedValue.isEmpty) {
           throw new ScroogeInternalException("Enum value not found")
         } else {
-          new ConstValue(null, enumValue.sid.name + "." + namedValue(0).sid.fullName)
+          val enumFqn = generator.qualifyNamedType(enumValue.sid, scope)
+          val enumValueFqn = namedValue(0).sid.addScope(enumFqn)
+          new ConstValue(null, enumValueFqn.fullName)
         }
       }
       case _ => {

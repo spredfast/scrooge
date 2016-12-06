@@ -1,8 +1,9 @@
 package {{package}}
 
-import com.twitter.finagle.{Service => FinagleService}
+import com.twitter.finagle.Thrift
+import com.twitter.finagle.stats.{NullStatsReceiver, StatsReceiver}
 import com.twitter.scrooge.{ThriftStruct, TReusableMemoryTransport}
-import com.twitter.util.Future
+import com.twitter.util.{Future, Return, Throw, Throwables}
 import java.nio.ByteBuffer
 import java.util.Arrays
 import org.apache.thrift.protocol._
@@ -18,9 +19,24 @@ import scala.language.higherKinds
 @javax.annotation.Generated(value = Array("com.twitter.scrooge.Compiler"))
 class {{ServiceName}}$FinagleService(
   iface: {{ServiceName}}[Future],
-  protocolFactory: TProtocolFactory
-) extends {{finagleServiceParent}}{{#hasParent}}(iface, protocolFactory){{/hasParent}} {
+  protocolFactory: TProtocolFactory,
+  stats: StatsReceiver,
+  maxThriftBufferSize: Int,
+  serviceName: String
+) extends {{finagleServiceParent}}{{#hasParent}}(iface, protocolFactory, stats, maxThriftBufferSize){{/hasParent}} {
   import {{ServiceName}}._
+
+  def this(
+    iface: {{ServiceName}}[Future],
+    protocolFactory: TProtocolFactory,
+    stats: StatsReceiver,
+    maxThriftBufferSize: Int
+  ) = this(iface, protocolFactory, stats, maxThriftBufferSize, "{{ServiceName}}")
+
+  def this(
+    iface: {{ServiceName}}[Future],
+    protocolFactory: TProtocolFactory
+  ) = this(iface, protocolFactory, NullStatsReceiver, Thrift.maxThriftBufferSize)
 {{^hasParent}}
 
   private[this] val tlReusableBuffer = new ThreadLocal[TReusableMemoryTransport] {
@@ -33,15 +49,18 @@ class {{ServiceName}}$FinagleService(
     buf
   }
 
-  private[this] def resetBuffer(trans: TReusableMemoryTransport, maxCapacity: Int = 4096) {
-    if (trans.currentCapacity > maxCapacity) {
+  private[this] val resetCounter = stats.scope("buffer").counter("resetCount")
+
+  private[this] def resetBuffer(trans: TReusableMemoryTransport): Unit = {
+    if (trans.currentCapacity > maxThriftBufferSize) {
+      resetCounter.incr()
       tlReusableBuffer.remove()
     }
   }
 
   protected val functionMap = new mutable$HashMap[String, (TProtocol, Int) => Future[Array[Byte]]]()
 
-  protected def addFunction(name: String, f: (TProtocol, Int) => Future[Array[Byte]]) {
+  protected def addFunction(name: String, f: (TProtocol, Int) => Future[Array[Byte]]): Unit = {
     functionMap(name) = f
   }
 
@@ -92,13 +111,13 @@ class {{ServiceName}}$FinagleService(
       val msg = iprot.readMessageBegin()
       val func = functionMap.get(msg.name)
       func match {
-        case Some(fn) => 
+        case _root_.scala.Some(fn) =>
           fn(iprot, msg.seqid)
         case _ =>
           TProtocolUtil.skip(iprot, TType.STRUCT)
           exception(msg.name, msg.seqid, TApplicationException.UNKNOWN_METHOD,
             "Invalid method name: '" + msg.name + "'")
-      }      
+      }
     } catch {
       case e: Exception => Future.exception(e)
     }
@@ -107,6 +126,7 @@ class {{ServiceName}}$FinagleService(
   // ---- end boilerplate.
 
 {{/hasParent}}
+  private[this] val scopedStats = if (serviceName != "") stats.scope(serviceName) else stats
 {{#functions}}
   {{>function}}
 {{/function}}

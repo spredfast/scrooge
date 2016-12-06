@@ -5,13 +5,13 @@ To get command line help:
 
 ::
 
-    $ ./sbt 'scrooge-generator/run-main com.twitter.scrooge.Main --help
+    $ ./sbt 'scrooge-generator/run-main com.twitter.scrooge.Main --help'
 
 To generate source with content written to the current directory:
 
 ::
 
-    $ ./sbt 'scrooge-generator/run-main com.twitter.scrooge.Main <thrift-file1> [<thrift-file2> ...]
+    $ ./sbt 'scrooge-generator/run-main com.twitter.scrooge.Main <thrift-file1> [<thrift-file2> ...]'
 
 To generate source with content written to a specified directory, using
 extra include paths, rebuilding only those files that have changed:
@@ -22,13 +22,13 @@ extra include paths, rebuilding only those files that have changed:
       -d <target-dir>   \
       -i <include-path> \
       -s                \
-      <thrift-file1> [<thrift-file2> ...]
+      <thrift-file1> [<thrift-file2> ...]'
 
 A complete command line help menu:
 
 ::
 
-    Usage: ./sbt 'scrooge-generator/run-main com.twitter.scrooge.Main [options] <files...>
+    Usage: ./sbt 'scrooge-generator/run-main com.twitter.scrooge.Main [options] <files...>'
 
       --help
             show this help screen
@@ -55,7 +55,7 @@ A complete command line help menu:
       -s | --skip-unchanged
             Don't re-generate if the target is newer than the input
       -l <value> | --language <value>
-            name of language to generate code in ('experimental-java' and 'scala' are currently supported)
+            name of language to generate code in ('scala' is currently supported)
       --experiment-flag <flag>
             [EXPERIMENTAL] DO NOT USE FOR PRODUCTION. This is meant only for enabling/disabling features for benchmarking
       --scala-warn-on-java-ns-fallback

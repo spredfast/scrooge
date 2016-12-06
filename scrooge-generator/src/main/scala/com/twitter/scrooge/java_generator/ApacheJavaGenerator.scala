@@ -1,57 +1,53 @@
 package com.twitter.scrooge.java_generator
 
-import com.twitter.scrooge.ast._
-import com.github.mustachejava.{Mustache, DefaultMustacheFactory}
-import com.twitter.mustache.ScalaObjectHandler
-import java.io.{FileWriter, File, StringWriter}
-import com.twitter.scrooge.ast.EnumType
-import com.twitter.scrooge.ast.StructType
-import com.twitter.scrooge.ast.SetType
-import com.twitter.scrooge.ast.MapType
-import com.twitter.scrooge.ast.ListType
-import com.twitter.scrooge.ast.ReferenceType
-import com.twitter.conversions.string._
+import com.github.mustachejava.{DefaultMustacheFactory, Mustache}
+import com.twitter.scrooge.mustache.ScalaObjectHandler
+import com.twitter.scrooge.ast.{EnumType, ListType, MapType, ReferenceType, SetType, StructType, _}
+import com.twitter.scrooge.backend.{GeneratorFactory, ServiceOption, Generator}
+import com.twitter.scrooge.frontend.{ResolvedDocument, ScroogeInternalException}
+import java.io.{File, FileWriter, StringWriter}
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
-import com.twitter.scrooge.backend.{ScalaGenerator, GeneratorFactory, ThriftGenerator, ServiceOption}
-import com.twitter.scrooge.frontend.{ScroogeInternalException, ResolvedDocument}
 
 object ApacheJavaGeneratorFactory extends GeneratorFactory {
-  val lang = "java"
+  val language = "java"
   private val templateCache = new TrieMap[String, Mustache]
   def apply(
-    includeMap: Map[String, ResolvedDocument],
+    doc: ResolvedDocument,
     defaultNamespace: String,
     experimentFlags: Seq[String]
-  ): ThriftGenerator = new ApacheJavaGenerator(includeMap, defaultNamespace, templateCache)
+  ): Generator = new ApacheJavaGenerator(doc, defaultNamespace, templateCache)
 }
 
 
 class ApacheJavaGenerator(
-    includeMap: Map[String, ResolvedDocument],
+    resolvedDoc: ResolvedDocument,
     defaultNamespace: String,
     templateCache: TrieMap[String, Mustache],
-    val genHashcode: Boolean = true // Defaulting to true for pants.
-  ) extends ThriftGenerator {
+    val genHashcode: Boolean = true) // Defaulting to true for pants.
+  extends Generator(resolvedDoc) {
+  val namespaceLanguage = "java"
   var counter = 0
 
   def printConstValue(
-      name: String,
-      fieldType: FieldType,
-      value: RHS,
-      ns: Option[Identifier],
-      in_static: Boolean = false,
-      defval: Boolean = false) = {
+    name: String,
+    fieldType: FieldType,
+    value: RHS,
+    ns: Option[Identifier],
+    in_static: Boolean = false,
+    defval: Boolean = false
+  ): String = {
     val controller = new PrintConstController(name, fieldType, value, this, ns, in_static, defval)
     renderMustache("print_const.mustache", controller).trim
   }
 
   def deepCopyContainer(
-      source_name_p1: String,
-      source_name_p2: String,
-      result_name: String,
-      fieldType: FieldType,
-      ns: Option[Identifier]) = {
+    source_name_p1: String,
+    source_name_p2: String,
+    result_name: String,
+    fieldType: FieldType,
+    ns: Option[Identifier]
+  ): String = {
     val controller = new DeepCopyController(
       source_name_p1,
       source_name_p2,
@@ -62,17 +58,31 @@ class ApacheJavaGenerator(
     renderMustache("generate_deep_copy_container.mustache", controller).trim
   }
 
-  def deepCopyNonContainer(source_name: String, fieldType: FieldType, ns: Option[Identifier]) = {
+  def deepCopyNonContainer(
+    source_name: String,
+    fieldType: FieldType,
+    ns: Option[Identifier]
+  ): String = {
     val controller = new DeepCopyController(source_name, "", "", fieldType, this, ns)
     renderMustache("generate_deep_copy_noncontainer.mustache", controller).trim
   }
 
-  def deserializeField(fieldType: FieldType, fieldName: String, ns: Option[Identifier], prefix: String = "") = {
+  def deserializeField(
+    fieldType: FieldType,
+    fieldName: String,
+    ns: Option[Identifier],
+    prefix: String = ""
+  ): String = {
     val controller = new DeserializeFieldController(fieldType, fieldName, prefix, this, ns)
     renderMustache("generate_deserialize_field.mustache", controller).trim
   }
 
-  def serializeField(fieldType: FieldType, fieldName: String, ns: Option[Identifier], prefix: String = "") = {
+  def serializeField(
+    fieldType: FieldType,
+    fieldName: String,
+    ns: Option[Identifier],
+    prefix: String = ""
+  ): String = {
     val controller = new SerializeFieldController(fieldType, fieldName, prefix, this, ns)
     renderMustache("generate_serialize_field.mustache", controller).trim
   }
@@ -82,7 +92,7 @@ class ApacheJavaGenerator(
     renderMustache("generate_field_value_meta_data.mustache", controller).trim
   }
 
-  def renderMustache(template: String, controller: Any = this) = {
+  def renderMustache(template: String, controller: Any = this): String = {
     val sw = new StringWriter()
     val mustache = templateCache.getOrElseUpdate(template, {
       val mf = new DefaultMustacheFactory("apachejavagen/")
@@ -94,19 +104,20 @@ class ApacheJavaGenerator(
     sw.toString
   }
 
-  def tmp(prefix: String = "tmp") = {
+  def tmp(prefix: String = "tmp"): String = {
     val tmpVal = prefix + counter
     counter = counter + 1
     tmpVal
   }
 
-  def namespacedFolder(destFolder: File, namespace: String, dryRun: Boolean) = {
+  def namespacedFolder(destFolder: File, namespace: String, dryRun: Boolean): File = {
     val file = new File(destFolder, namespace.replace('.', File.separatorChar))
     if (!dryRun) file.mkdirs()
     file
   }
 
-  def getNamespace(doc: Document): Identifier = doc.namespace("java") getOrElse SimpleID(defaultNamespace)
+  def getNamespace(doc: Document): Identifier =
+    doc.namespace("java").getOrElse(SimpleID(defaultNamespace))
 
   def getIncludeNamespace(includeFileName: String): Identifier = {
     val javaNamespace = includeMap.get(includeFileName).flatMap {
@@ -122,10 +133,11 @@ class ApacheJavaGenerator(
     }
 
   def typeName(
-      t: FunctionType,
-      inContainer: Boolean = false,
-      inInit: Boolean = false,
-      skipGeneric: Boolean = false): String = {
+    t: FunctionType,
+    inContainer: Boolean = false,
+    inInit: Boolean = false,
+    skipGeneric: Boolean = false
+  ): String = {
     t match {
       case Void => if (inContainer) "Void" else "void"
       case OnewayVoid => if (inContainer) "Void" else "void"
@@ -138,21 +150,36 @@ class ApacheJavaGenerator(
       case TString => "String"
       case TBinary => "ByteBuffer"
       case n: NamedType => qualifyNamedType(n.sid, n.scopePrefix).fullName
-      case MapType(k, v, _) => {
+      case MapType(k, v, _) =>
         val prefix = if (inInit) "HashMap" else "Map"
         prefix + (if (skipGeneric) "" else "<" + typeName(k, inContainer = true) + "," + typeName(v, inContainer = true) + ">")
-      }
-      case SetType(x, _) => {
-        val prefix = if (inInit) "HashSet" else "Set"
+      case SetType(x, _) =>
+        val prefix = if (inInit)
+          x match {
+            case e:EnumType => "EnumSet"
+            case _ => "HashSet"
+          }
+        else "Set"
         prefix + (if (skipGeneric) "" else "<" + typeName(x, inContainer = true) + ">")
-      }
-      case ListType(x, _) => {
+      case ListType(x, _) =>
         val prefix = if (inInit) "ArrayList" else "List"
         prefix + (if (skipGeneric) "" else "<" + typeName(x, inContainer = true) + ">")
-      }
       case r: ReferenceType =>
         throw new ScroogeInternalException("ReferenceType should not appear in backend")
-      case _ => throw new ScroogeInternalException("unknown type")
+      case _ => throw new ScroogeInternalException("unknown type: " + t)
+    }
+  }
+
+  def initField(
+    fieldType: FunctionType,
+    inContainer: Boolean = false
+  ): String = {
+    fieldType match {
+      case SetType(eltType: EnumType, _) =>
+        s"EnumSet.noneOf(${typeName(eltType)}.class)"
+      case _ =>
+        val tName = typeName(fieldType, inInit = true)
+        s"new ${tName}()"
     }
   }
 
@@ -171,9 +198,8 @@ class ApacheJavaGenerator(
       case SetType(key, cpp) => "TType.SET"
       case ListType(key, cpp) => "TType.LIST"
       case TBinary => "TType.STRING"
-      case _ => {
+      case _ =>
         throw new ScroogeInternalException("INVALID TYPE IN getTypeString: " + fieldType)
-      }
     }
   }
 
@@ -185,9 +211,14 @@ class ApacheJavaGenerator(
   }
 
   // main entry
-  def apply(doc: Document, serviceOptions: Set[ServiceOption], outputPath: File, dryRun: Boolean = false) = {
+  def apply(
+    serviceOptions: Set[ServiceOption],
+    outputPath: File,
+    dryRun: Boolean = false
+  ): Iterable[File] = {
     // TODO: Implement serviceOptions (WithFinagle, etc)
     val generatedFiles = new mutable.ListBuffer[File]
+    val doc = resolvedDoc.document
     val namespace = getNamespace(doc)
     val packageDir = namespacedFolder(outputPath, namespace.fullName, dryRun)
 

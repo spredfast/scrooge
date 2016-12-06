@@ -1,7 +1,7 @@
 {{#public}}
 package {{package}}
 
-import com.twitter.scrooge.{ThriftStruct, ThriftStructCodec3, ThriftStructFieldInfo, ThriftUnion, TFieldBlob}
+import com.twitter.scrooge.{HasThriftStructCodec3, ThriftStruct, ThriftStructCodec3, ThriftStructFieldInfo, ThriftUnion, TFieldBlob, ThriftUnionFieldInfo}
 import org.apache.thrift.protocol._
 import java.nio.ByteBuffer
 import java.util.Arrays
@@ -13,7 +13,12 @@ import scala.collection.{Map, Set}
 
 {{/public}}
 @javax.annotation.Generated(value = Array("com.twitter.scrooge.Compiler"))
-sealed trait {{StructName}} extends {{parentType}}
+sealed trait {{StructName}}
+  extends {{parentType}}
+  with HasThriftStructCodec3[{{StructName}}] {
+
+  def _codec: ThriftStructCodec3[{{StructName}}] = {{StructName}}
+}
 
 private object {{StructName}}Decoder {
   def apply(_iprot: TProtocol, newUnknown: TFieldBlob => {{StructName}}): {{StructName}} = {
@@ -59,31 +64,37 @@ private object {{StructName}}Decoder {
   }
 }
 
-object {{StructName}}Helper {
+object {{StructName}}Aliases {
 {{#fields}}
-  type {{FieldName}}Alias = {{>qualifiedFieldType}}
+
+  type {{FieldName}}Alias = {{fieldType}}
 
   def withoutPassthroughFields_{{FieldName}}(obj: {{StructName}}.{{FieldName}}): {{StructName}}.{{FieldName}} = {
     val field = obj.{{fieldName}}
 {{#passthroughFields}}
-      {{StructName}}.{{FieldName}}(
-        {{>withoutPassthrough}}
-      )
+    {{StructName}}.{{FieldName}}(
+      {{>withoutPassthrough}}
+    )
 {{/passthroughFields}}
-    }
+  }
 
-  {{#hasDefaultValue}}val {{FieldName}}DefaultValue = {{defaultFieldValue}}{{/hasDefaultValue}}
+{{#hasDefaultValue}}
+  val {{FieldName}}DefaultValue = {{defaultFieldValue}}
+{{/hasDefaultValue}}
 {{#fieldKeyType}}
-  val {{FieldName}}KeyTypeManifest = Some(implicitly[Manifest[{{fieldKeyType}}]])
+  val {{FieldName}}KeyTypeManifest: _root_.scala.Option[Manifest[{{fieldKeyType}}]] =
+    _root_.scala.Some(implicitly[Manifest[{{fieldKeyType}}]])
 {{/fieldKeyType}}
 {{^fieldKeyType}}
-  val {{FieldName}}KeyTypeManifest = None
+  val {{FieldName}}KeyTypeManifest: _root_.scala.Option[Manifest[_]] = _root_.scala.None
 {{/fieldKeyType}}
+
 {{#fieldValueType}}
-  val {{FieldName}}ValueTypeManifest = Some(implicitly[Manifest[{{fieldValueType}}]])
+  val {{FieldName}}ValueTypeManifest: _root_.scala.Option[Manifest[{{fieldValueType}}]] =
+    _root_.scala.Some(implicitly[Manifest[{{fieldValueType}}]])
 {{/fieldValueType}}
 {{^fieldValueType}}
-  val {{FieldName}}ValueTypeManifest = None
+  val {{FieldName}}ValueTypeManifest: _root_.scala.Option[Manifest[_]] = _root_.scala.None
 {{/fieldValueType}}
 {{/fields}}
 }
@@ -112,12 +123,27 @@ object {{StructName}} extends ThriftStructCodec3[{{StructName}}] {
     immutable$Map.empty[String, String]
 {{/structAnnotations}}
 
-  override def encode(_item: {{StructName}}, _oprot: TProtocol) { _item.write(_oprot) }
-  override def decode(_iprot: TProtocol): {{StructName}} = {{StructName}}Decoder(_iprot, UnknownUnionField(_))
+  /**
+   * Field information in declaration order.
+   */
+  lazy val fieldInfos: scala.List[ThriftUnionFieldInfo[_ <: {{StructName}}, _]] = scala.List(
+{{#fields}}
+    new ThriftUnionFieldInfo[{{FieldName}}, {{StructName}}Aliases.{{FieldName}}Alias](
+      {{FieldName}}.fieldInfo,
+      {{FieldName}}.unapply
+    )
+{{/fields|,}}
+  )
+
+  override def encode(_item: {{StructName}}, _oprot: TProtocol): Unit =
+    _item.write(_oprot)
+
+  override def decode(_iprot: TProtocol): {{StructName}} =
+    {{StructName}}Decoder(_iprot, UnknownUnionField(_))
 
   def apply(_iprot: TProtocol): {{StructName}} = decode(_iprot)
 
-  import {{StructName}}Helper._
+  import {{StructName}}Aliases._
 
   def withoutPassthroughFields(struct: {{StructName}}): {{StructName}} = {
     struct match {
@@ -130,9 +156,10 @@ object {{StructName}} extends ThriftStructCodec3[{{StructName}}] {
 
 {{#fields}}
   object {{FieldName}} extends ({{FieldName}}Alias => {{FieldName}}) {
-    def withoutPassthroughFields(obj: {{FieldName}}): {{FieldName}} = withoutPassthroughFields_{{FieldName}}(obj)
+    def withoutPassthroughFields(obj: {{FieldName}}): {{FieldName}} =
+      withoutPassthroughFields_{{FieldName}}(obj)
 
-    val fieldInfo =
+    val fieldInfo: ThriftStructFieldInfo =
       new ThriftStructFieldInfo(
         {{fieldConst}},
         false,
@@ -163,8 +190,22 @@ object {{StructName}} extends ThriftStructCodec3[{{StructName}}] {
       )
   }
 
-  case class {{FieldName}}({{fieldName}}: {{FieldName}}Alias{{#hasDefaultValue}} = {{FieldName}}DefaultValue{{/hasDefaultValue}}) extends {{StructName}} {
-    override def write(_oprot: TProtocol) {
+  case class {{FieldName}}(
+      {{fieldName}}: {{FieldName}}Alias{{#hasDefaultValue}} = {{FieldName}}DefaultValue{{/hasDefaultValue}})
+    extends {{StructName}} {
+{{#fieldNameCamelCase}}
+    /** An alias for `{{fieldName}}` */
+    def {{fieldNameCamelCase}}: {{FieldName}}Alias = {{fieldName}}
+{{/fieldNameCamelCase}}
+
+    //protected type ContainedType = {{FieldName}}Alias
+
+    def containedValue(): {{FieldName}}Alias = {{fieldName}}
+
+    def unionStructFieldInfo: _root_.scala.Option[ThriftStructFieldInfo] =
+      _root_.scala.Some({{FieldName}}.fieldInfo)
+
+    override def write(_oprot: TProtocol): Unit = {
 {{^isPrimitive}}
       if ({{fieldName}} == null)
         throw new TProtocolException("Cannot write a TUnion with no set value!")
@@ -179,8 +220,15 @@ object {{StructName}} extends ThriftStructCodec3[{{StructName}}] {
   }
 
 {{/fields}}
-  case class UnknownUnionField private[{{StructName}}](private val field: TFieldBlob) extends {{StructName}} {
-    override def write(_oprot: TProtocol) {
+  case class UnknownUnionField private[{{StructName}}](
+      private val field: TFieldBlob)
+    extends {{StructName}} {
+
+    def containedValue(): Unit = ()
+
+    def unionStructFieldInfo: _root_.scala.Option[ThriftStructFieldInfo] = _root_.scala.None
+
+    override def write(_oprot: TProtocol): Unit = {
       _oprot.writeStructBegin(Union)
       field.write(_oprot)
       _oprot.writeFieldStop()

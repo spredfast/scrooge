@@ -2,7 +2,16 @@
 package {{package}}
 
 import com.twitter.scrooge.{
-  TFieldBlob, ThriftException, ThriftStruct, ThriftStructCodec3, ThriftStructFieldInfo, ThriftUtil}
+  HasThriftStructCodec3,
+  LazyTProtocol,
+  TFieldBlob,
+  ThriftException,
+  ThriftStruct,
+  ThriftStructCodec3,
+  ThriftStructFieldInfo,
+  ThriftStructMetaData,
+  ThriftUtil
+}
 import org.apache.thrift.protocol._
 import org.apache.thrift.transport.{TMemoryBuffer, TTransport}
 import java.nio.ByteBuffer
@@ -38,16 +47,16 @@ object {{StructName}} extends ThriftStructCodec3[{{StructName}}] {
       {{required}},
       {{fieldConst}}Manifest,
 {{#fieldKeyType}}
-      Some(implicitly[Manifest[{{fieldKeyType}}]]),
+      _root_.scala.Some(implicitly[Manifest[{{fieldKeyType}}]]),
 {{/fieldKeyType}}
 {{^fieldKeyType}}
-      None,
+      _root_.scala.None,
 {{/fieldKeyType}}
 {{#fieldValueType}}
-      Some(implicitly[Manifest[{{fieldValueType}}]]),
+      _root_.scala.Some(implicitly[Manifest[{{fieldValueType}}]]),
 {{/fieldValueType}}
 {{^fieldValueType}}
-      None,
+      _root_.scala.None,
 {{/fieldValueType}}
 {{#fieldTypeAnnotations}}
       immutable$Map(
@@ -64,11 +73,17 @@ object {{StructName}} extends ThriftStructCodec3[{{StructName}}] {
 {{#pairs}}
         "{{key}}" -> "{{value}}"
 {{/pairs|,}}
-      )
+      ),
 {{/fieldFieldAnnotations}}
 {{^fieldFieldAnnotations}}
-      immutable$Map.empty[String, String]
+      immutable$Map.empty[String, String],
 {{/fieldFieldAnnotations}}
+{{#hasDefaultValue}}
+      Some[{{fieldType}}]({{defaultFieldValue}})
+{{/hasDefaultValue}}
+{{^hasDefaultValue}}
+      None
+{{/hasDefaultValue}}
     )
 {{/fields|,}}
   )
@@ -88,7 +103,7 @@ object {{StructName}} extends ThriftStructCodec3[{{StructName}}] {
   /**
    * Checks that all required fields are non-null.
    */
-  def validate(_item: {{StructName}}) {
+  def validate(_item: {{StructName}}): Unit = {
 {{#fields}}
 {{#required}}
 {{#nullable}}
@@ -109,14 +124,89 @@ object {{StructName}} extends ThriftStructCodec3[{{StructName}}] {
 {{/fields|,}}
     )
 
-  override def encode(_item: {{StructName}}, _oproto: TProtocol) {
+  override def encode(_item: {{StructName}}, _oproto: TProtocol): Unit = {
     _item.write(_oproto)
   }
 
-  override def decode(_iprot: TProtocol): {{StructName}} = {
+{{#withTrait}}
+  private[this] def lazyDecode(_iprot: LazyTProtocol): {{StructName}} = {
+
 {{#fields}}
+{{#isLazyReadEnabled}}
+    var {{fieldNameForWire}}Offset: Int = -1
+{{/isLazyReadEnabled}}
+{{^isLazyReadEnabled}}
 {{#optional}}
     var {{fieldName}}: Option[{{fieldType}}] = None
+{{/optional}}
+{{^optional}}
+    var {{fieldName}}: {{fieldType}} = {{defaultReadValue}}
+{{/optional}}
+{{/isLazyReadEnabled}}
+{{#required}}
+    var {{gotName}} = false
+{{/required}}
+{{/fields}}
+
+    var _passthroughFields: Builder[(Short, TFieldBlob), immutable$Map[Short, TFieldBlob]] = null
+    var _done = false
+    val _start_offset = _iprot.offset
+
+    _iprot.readStructBegin()
+    while (!_done) {
+      val _field = _iprot.readFieldBegin()
+      if (_field.`type` == TType.STOP) {
+        _done = true
+      } else {
+        _field.id match {
+{{#fields}}
+          case {{id}} =>
+            {{>readLazyField}}
+{{/fields}}
+          case _ =>
+            if (_passthroughFields == null)
+              _passthroughFields = immutable$Map.newBuilder[Short, TFieldBlob]
+            _passthroughFields += (_field.id -> TFieldBlob.read(_field, _iprot))
+        }
+        _iprot.readFieldEnd()
+      }
+    }
+    _iprot.readStructEnd()
+
+{{#fields}}
+{{#required}}
+    if (!{{gotName}}) throw new TProtocolException("Required field '{{fieldName}}' was not found in serialized data for struct {{StructName}}")
+{{/required}}
+{{/fields}}
+    new Lazy{{InstanceClassName}}(
+      _iprot,
+      _iprot.buffer,
+      _start_offset,
+      _iprot.offset,
+{{#fields}}
+      {{#isLazyReadEnabled}}{{fieldNameForWire}}Offset{{/isLazyReadEnabled}}{{^isLazyReadEnabled}}{{fieldName}}{{/isLazyReadEnabled}},
+{{/fields}}
+      if (_passthroughFields == null)
+        NoPassthroughFields
+      else
+        _passthroughFields.result()
+    )
+  }
+
+  override def decode(_iprot: TProtocol): {{StructName}} =
+    _iprot match {
+      case i: LazyTProtocol => lazyDecode(i)
+      case i => eagerDecode(i)
+    }
+
+  private[this] def eagerDecode(_iprot: TProtocol): {{StructName}} = {
+{{/withTrait}}
+{{^withTrait}}
+  override def decode(_iprot: TProtocol): {{StructName}} = {
+{{/withTrait}}
+{{#fields}}
+{{#optional}}
+    var {{fieldName}}: _root_.scala.Option[{{fieldType}}] = _root_.scala.None
 {{/optional}}
 {{^optional}}
     var {{fieldName}}: {{fieldType}} = {{defaultReadValue}}
@@ -167,7 +257,7 @@ object {{StructName}} extends ThriftStructCodec3[{{StructName}}] {
 
   def apply(
 {{#fields}}
-    {{fieldName}}: {{>optionalType}}{{#hasDefaultValue}} = {{defaultFieldValue}}{{/hasDefaultValue}}{{#optional}} = None{{/optional}}
+    {{fieldName}}: {{>optionalType}}{{#hasDefaultValue}} = {{defaultFieldValue}}{{/hasDefaultValue}}{{#optional}} = _root_.scala.None{{/optional}}
 {{/fields|,}}
   ): {{StructName}} =
     new {{InstanceClassName}}(
@@ -180,21 +270,21 @@ object {{StructName}} extends ThriftStructCodec3[{{StructName}}] {
   def unapply(_item: {{StructName}}): Boolean = true
 {{/arity0}}
 {{#arity1}}
-  def unapply(_item: {{StructName}}): Option[{{>optionalType}}] = Some(_item.{{fieldName}})
+  def unapply(_item: {{StructName}}): _root_.scala.Option[{{>optionalType}}] = _root_.scala.Some(_item.{{fieldName}})
 {{/arity1}}
 {{#arityN}}
-  def unapply(_item: {{StructName}}): Option[{{product}}] = Some(_item)
+  def unapply(_item: {{StructName}}): _root_.scala.Option[{{product}}] = _root_.scala.Some(_item)
 {{/arityN}}
 
 
 {{#fields}}
-  private def {{readFieldValueName}}(_iprot: TProtocol): {{fieldType}} = {
+  @inline private def {{readFieldValueName}}(_iprot: TProtocol): {{fieldType}} = {
 {{#readWriteInfo}}
     {{>readValue}}
 {{/readWriteInfo}}
   }
 
-  private def {{writeFieldName}}({{valueVariableName}}: {{fieldType}}, _oprot: TProtocol) {
+  @inline private def {{writeFieldName}}({{valueVariableName}}: {{fieldType}}, _oprot: TProtocol): Unit = {
 {{#readWriteInfo}}
     _oprot.writeFieldBegin({{fieldConst}}{{#isEnum}}I32{{/isEnum}})
     {{writeFieldValueName}}({{valueVariableName}}, _oprot)
@@ -202,7 +292,7 @@ object {{StructName}} extends ThriftStructCodec3[{{StructName}}] {
 {{/readWriteInfo}}
   }
 
-  private def {{writeFieldValueName}}({{valueVariableName}}: {{fieldType}}, _oprot: TProtocol) {
+  @inline private def {{writeFieldValueName}}({{valueVariableName}}: {{fieldType}}, _oprot: TProtocol): Unit = {
 {{#readWriteInfo}}
     {{>writeValue}}
 {{/readWriteInfo}}
@@ -210,32 +300,11 @@ object {{StructName}} extends ThriftStructCodec3[{{StructName}}] {
 
 {{/fields}}
 
-
-  private def ttypeToHuman(byte: Byte) = {
-    // from https://github.com/apache/thrift/blob/master/lib/java/src/org/apache/thrift/protocol/TType.java
-    byte match {
-      case TType.STOP   => "STOP"
-      case TType.VOID   => "VOID"
-      case TType.BOOL   => "BOOL"
-      case TType.BYTE   => "BYTE"
-      case TType.DOUBLE => "DOUBLE"
-      case TType.I16    => "I16"
-      case TType.I32    => "I32"
-      case TType.I64    => "I64"
-      case TType.STRING => "STRING"
-      case TType.STRUCT => "STRUCT"
-      case TType.MAP    => "MAP"
-      case TType.SET    => "SET"
-      case TType.LIST   => "LIST"
-      case TType.ENUM   => "ENUM"
-      case _            => "UNKNOWN"
-    }
-  }
-
 {{#withTrait}}
   object Immutable extends ThriftStructCodec3[{{StructName}}] {
-    override def encode(_item: {{StructName}}, _oproto: TProtocol) { _item.write(_oproto) }
+    override def encode(_item: {{StructName}}, _oproto: TProtocol): Unit = { _item.write(_oproto) }
     override def decode(_iprot: TProtocol): {{StructName}} = {{StructName}}.decode(_iprot)
+    override lazy val metaData: ThriftStructMetaData[{{StructName}}] = {{StructName}}.metaData
   }
 
   /**
@@ -245,13 +314,13 @@ object {{StructName}} extends ThriftStructCodec3[{{StructName}}] {
    */
   class Immutable(
 {{#fields}}
-    val {{fieldName}}: {{>optionalType}},
+      val {{fieldName}}: {{>optionalType}},
 {{/fields}}
-    override val _passthroughFields: immutable$Map[Short, TFieldBlob]
-  ) extends {{StructName}} {
+      override val _passthroughFields: immutable$Map[Short, TFieldBlob])
+    extends {{StructName}} {
     def this(
 {{#fields}}
-      {{fieldName}}: {{>optionalType}}{{#hasDefaultValue}} = {{defaultFieldValue}}{{/hasDefaultValue}}{{#optional}} = None{{/optional}}
+      {{fieldName}}: {{>optionalType}}{{#hasDefaultValue}} = {{defaultFieldValue}}{{/hasDefaultValue}}{{#optional}} = _root_.scala.None{{/optional}}
 {{/fields|,}}
     ) = this(
 {{#fields}}
@@ -259,6 +328,62 @@ object {{StructName}} extends ThriftStructCodec3[{{StructName}}] {
 {{/fields}}
       Map.empty
     )
+  }
+
+  /**
+   * This is another Immutable, this however keeps strings as lazy values that are lazily decoded from the backing
+   * array byte on read.
+   */
+  private[this] class Lazy{{InstanceClassName}}(
+      _proto: LazyTProtocol,
+      _buf: Array[Byte],
+      _start_offset: Int,
+      _end_offset: Int,
+{{#fields}}
+      {{#isLazyReadEnabled}}{{fieldNameForWire}}Offset: Int,{{/isLazyReadEnabled}}{{^isLazyReadEnabled}}val {{fieldName}}: {{>optionalType}},{{/isLazyReadEnabled}}
+{{/fields}}
+      override val _passthroughFields: immutable$Map[Short, TFieldBlob])
+    extends {{StructName}} {
+
+    override def write(_oprot: TProtocol): Unit = {
+      _oprot match {
+        case i: LazyTProtocol => i.writeRaw(_buf, _start_offset, _end_offset - _start_offset)
+        case _ => super.write(_oprot)
+      }
+    }
+
+{{#fields}}
+{{#isLazyReadEnabled}}
+    lazy val {{fieldName}}: {{>optionalType}} =
+{{#optional}}
+      if ({{fieldNameForWire}}Offset == -1)
+        None
+      else {
+        Some(_proto.{{decodeProtocol}}(_buf, {{fieldNameForWire}}Offset))
+      }
+{{/optional}}
+{{^optional}}
+      if ({{fieldNameForWire}}Offset == -1)
+        {{defaultReadValue}}
+      else {
+        _proto.{{decodeProtocol}}(_buf, {{fieldNameForWire}}Offset)
+      }
+{{/optional}}
+{{/isLazyReadEnabled}}
+{{/fields}}
+
+    /**
+     * Override the super hash code to make it a lazy val rather than def.
+     *
+     * Calculating the hash code can be expensive, caching it where possible
+     * can provide significant performance wins. (Key in a hash map for instance)
+     * Usually not safe since the normal constructor will accept a mutable map or
+     * set as an arg
+     * Here however we control how the class is generated from serialized data.
+     * With the class private and the contract that we throw away our mutable references
+     * having the hash code lazy here is safe.
+     */
+    override lazy val hashCode = super.hashCode
   }
 
   /**
@@ -288,20 +413,21 @@ class {{StructName}}(
 {{/withTrait}}
   extends {{parentType}}
   with {{product}}
+  with HasThriftStructCodec3[{{StructName}}]
   with java.io.Serializable
 {
   import {{StructName}}._
 {{^withTrait}}
-    def this(
+  def this(
 {{#fields}}
-      {{fieldName}}: {{>optionalType}}{{#hasDefaultValue}} = {{defaultFieldValue}}{{/hasDefaultValue}}{{#optional}} = None{{/optional}}
+    {{fieldName}}: {{>optionalType}}{{#hasDefaultValue}} = {{defaultFieldValue}}{{/hasDefaultValue}}{{#optional}} = _root_.scala.None{{/optional}}
 {{/fields|,}}
-    ) = this(
+  ) = this(
 {{#fields}}
-      {{fieldName}},
+    {{fieldName}},
 {{/fields}}
-      Map.empty
-    )
+    Map.empty
+  )
 {{/withTrait}}
 {{#withTrait}}
 
@@ -316,47 +442,55 @@ class {{StructName}}(
   def _{{indexP1}} = {{fieldName}}
 {{/fields}}
 
+{{#isResponse}}
+  def successField: Option[{{successFieldType}}] = {{successFieldValue}}
+  def exceptionFields: Iterable[Option[com.twitter.scrooge.ThriftException]] = {{exceptionValues}}
+{{/isResponse}}
+
 {{#withFieldGettersAndSetters}}
   /**
    * Gets a field value encoded as a binary blob using TCompactProtocol.  If the specified field
-   * is present in the passthrough map, that value is returend.  Otherwise, if the specified field
+   * is present in the passthrough map, that value is returned.  Otherwise, if the specified field
    * is known and not optional and set to None, then the field is serialized and returned.
    */
-  def getFieldBlob(_fieldId: Short): Option[TFieldBlob] = {
+  def getFieldBlob(_fieldId: Short): _root_.scala.Option[TFieldBlob] = {
     lazy val _buff = new TMemoryBuffer(32)
     lazy val _oprot = new TCompactProtocol(_buff)
-    _passthroughFields.get(_fieldId) orElse {
-      val _fieldOpt: Option[TField] =
-        _fieldId match {
+    _passthroughFields.get(_fieldId) match {
+      case blob: _root_.scala.Some[TFieldBlob] => blob
+      case _root_.scala.None => {
+        val _fieldOpt: _root_.scala.Option[TField] =
+          _fieldId match {
 {{#fields}}
-          case {{id}} =>
+            case {{id}} =>
 {{#readWriteInfo}}
 {{#optional}}
-            if ({{fieldName}}.isDefined) {
+              if ({{fieldName}}.isDefined) {
 {{/optional}}
 {{^optional}}
 {{#nullable}}
-            if ({{fieldName}} ne null) {
+              if ({{fieldName}} ne null) {
 {{/nullable}}
 {{^nullable}}
-            if (true) {
+              if (true) {
 {{/nullable}}
 {{/optional}}
-              {{writeFieldValueName}}({{fieldName}}{{#optional}}.get{{/optional}}, _oprot)
-              Some({{StructName}}.{{fieldConst}})
-            } else {
-              None
-            }
+                {{writeFieldValueName}}({{fieldName}}{{#optional}}.get{{/optional}}, _oprot)
+                _root_.scala.Some({{StructName}}.{{fieldConst}})
+              } else {
+                _root_.scala.None
+              }
 {{/readWriteInfo}}
 {{/fields}}
-          case _ => None
+            case _ => _root_.scala.None
+          }
+        _fieldOpt match {
+          case _root_.scala.Some(_field) =>
+            val _data = Arrays.copyOfRange(_buff.getArray, 0, _buff.length)
+            _root_.scala.Some(TFieldBlob(_field, _data))
+          case _root_.scala.None =>
+            _root_.scala.None
         }
-      _fieldOpt match {
-        case Some(_field) =>
-          val _data = Arrays.copyOfRange(_buff.getArray, 0, _buff.length)
-          Some(TFieldBlob(_field, _data))
-        case None =>
-          None
       }
     }
   }
@@ -383,7 +517,7 @@ class {{StructName}}(
 {{#readWriteInfo}}
       case {{id}} =>
 {{#optional}}
-        {{fieldName}} = Some({{readFieldValueName}}(_blob.read))
+        {{fieldName}} = _root_.scala.Some({{readFieldValueName}}(_blob.read))
 {{/optional}}
 {{^optional}}
         {{fieldName}} = {{readFieldValueName}}(_blob.read)
@@ -402,7 +536,7 @@ class {{StructName}}(
 
   /**
    * If the specified field is optional, it is set to None.  Otherwise, if the field is
-   * known, it is reverted to its default value; if the field is unknown, it is subtracked
+   * known, it is reverted to its default value; if the field is unknown, it is removed
    * from the passthroughFields map, if present.
    */
   def unsetField(_fieldId: Short): {{StructName}} = {
@@ -414,7 +548,7 @@ class {{StructName}}(
 {{#fields}}
       case {{id}} =>
 {{#optional}}
-        {{fieldName}} = None
+        {{fieldName}} = _root_.scala.None
 {{/optional}}
 {{^optional}}
         {{fieldName}} = {{defaultReadValue}}
@@ -432,7 +566,7 @@ class {{StructName}}(
 
   /**
    * If the specified field is optional, it is set to None.  Otherwise, if the field is
-   * known, it is reverted to its default value; if the field is unknown, it is subtracked
+   * known, it is reverted to its default value; if the field is unknown, it is removed
    * from the passthroughFields map, if present.
    */
 {{#fields}}
@@ -441,7 +575,7 @@ class {{StructName}}(
 {{/fields}}
 {{/withFieldGettersAndSetters}}
 
-  override def write(_oprot: TProtocol) {
+  override def write(_oprot: TProtocol): Unit = {
     {{StructName}}.validate(this)
     _oprot.writeStructBegin(Struct)
 {{#fields}}
@@ -459,7 +593,9 @@ class {{StructName}}(
 {{/optional}}
 {{/readWriteInfo}}
 {{/fields}}
-    _passthroughFields.values foreach { _.write(_oprot) }
+    if (_passthroughFields.nonEmpty) {
+      _passthroughFields.values.foreach { _.write(_oprot) }
+    }
     _oprot.writeFieldStop()
     _oprot.writeStructEnd()
   }
@@ -479,8 +615,13 @@ class {{StructName}}(
 
   override def canEqual(other: Any): Boolean = other.isInstanceOf[{{StructName}}]
 
+  private def _equals(x: {{StructName}}, y: {{StructName}}): Boolean =
+      x.productArity == y.productArity &&
+      x.productIterator.sameElements(y.productIterator)
+
   override def equals(other: Any): Boolean =
-    _root_.scala.runtime.ScalaRunTime._equals(this, other) &&
+    canEqual(other) &&
+      _equals(this, other.asInstanceOf[{{StructName}}]) &&
       _passthroughFields == other.asInstanceOf[{{StructName}}]._passthroughFields
 
   override def hashCode: Int = _root_.scala.runtime.ScalaRunTime._hashCode(this)
@@ -501,4 +642,6 @@ class {{StructName}}(
   }
 
   override def productPrefix: String = "{{StructName}}"
+
+  def _codec: ThriftStructCodec3[{{StructName}}] = {{StructName}}
 }

@@ -4,7 +4,7 @@
 # Author: Paul Phillips <paulp@typesafe.com>
 
 # todo - make this dynamic
-declare -r sbt_release_version=0.13.5
+declare -r sbt_release_version=0.13.9
 
 declare sbt_jar sbt_dir sbt_create sbt_launch_dir
 declare scala_version java_home sbt_explicit_version
@@ -122,12 +122,12 @@ init_default_option_file () {
 
 declare -r cms_opts="-XX:+CMSClassUnloadingEnabled -XX:+UseConcMarkSweepGC"
 declare -r jit_opts="-XX:ReservedCodeCacheSize=256m -XX:+TieredCompilation"
-declare -r default_jvm_opts="-Dfile.encoding=UTF8 -XX:MaxPermSize=384m -Xms512m -Xmx1536m -Xss2m $jit_opts $cms_opts"
+declare -r default_jvm_opts="-Dfile.encoding=UTF8 -Xms512m -Xmx1536m -Xss2m $jit_opts $cms_opts"
 declare -r noshare_opts="-Dsbt.global.base=project/.sbtboot -Dsbt.boot.directory=project/.boot -Dsbt.ivy.home=project/.ivy"
 declare -r latest_28="2.8.2"
 declare -r latest_29="2.9.3"
 declare -r latest_210="2.10.3"
-declare -r latest_211="2.11.0-M5"
+declare -r latest_211="2.11.7"
 
 declare -r script_path=$(get_script_path "$BASH_SOURCE")
 declare -r script_dir="$(dirname $script_path)"
@@ -137,7 +137,7 @@ declare -r script_name="$(basename $script_path)"
 declare java_cmd=java
 declare sbt_opts_file=$(init_default_option_file SBT_OPTS .sbtopts)
 declare jvm_opts_file=$(init_default_option_file JVM_OPTS .jvmopts)
-declare sbt_launch_repo="http://typesafe.artifactoryonline.com/typesafe/ivy-releases"
+declare sbt_launch_repo="http://repo.typesafe.com/typesafe/ivy-releases"
 
 # pull -J and -D options to give to java.
 declare -a residual_args
@@ -209,7 +209,7 @@ download_url () {
 
   mkdir -p $(dirname "$jar") && {
     if which curl >/dev/null; then
-      curl --fail --silent "$url" --output "$jar"
+      curl --location --fail --silent "$url" --output "$jar"
     elif which wget >/dev/null; then
       wget --quiet -O "$jar" "$url"
     fi

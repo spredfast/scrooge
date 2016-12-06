@@ -18,10 +18,16 @@ package com.twitter.scrooge
 
 import com.twitter.scrooge.ast.Document
 import com.twitter.scrooge.backend.{GeneratorFactory, ScalaGenerator, ServiceOption}
-import com.twitter.scrooge.frontend.{TypeResolver, ThriftParser, Importer}
+import com.twitter.scrooge.frontend.{FileParseException, TypeResolver, ThriftParser, Importer}
 import java.io.{File, FileWriter}
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
+
+
+object CompilerDefaults {
+  var language: String = "scala"
+  var defaultNamespace: String = "thrift"
+}
 
 class Compiler {
   val defaultDestFolder = "."
@@ -37,8 +43,8 @@ class Compiler {
   var fileMapPath: scala.Option[String] = None
   var fileMapWriter: scala.Option[FileWriter] = None
   var dryRun: Boolean = false
-  var language: String = "scala"
-  var defaultNamespace: String = "thrift"
+  var language: String = CompilerDefaults.language
+  var defaultNamespace: String = CompilerDefaults.defaultNamespace
   var scalaWarnOnJavaNSFallback: Boolean = false
 
   def run() {
@@ -58,42 +64,50 @@ class Compiler {
     val importer = Importer(new File(".")) +: Importer(includePaths)
 
     val isJava = language.equals("java")
-    val isScala = language.equals("scala")
-    val rhsStructs = isJava || isScala
     val documentCache = new TrieMap[String, Document]
 
     // compile
     for (inputFile <- thriftFiles) {
-      val parser = new ThriftParser(importer, strict, defaultOptional = isJava, skipIncludes = false, documentCache)
-      val doc0 = parser.parseFile(inputFile).mapNamespaces(namespaceMappings.toMap)
+      try {
+        val parser = new ThriftParser(
+          importer,
+          strict,
+          defaultOptional = isJava,
+          skipIncludes = false,
+          documentCache
+        )
+        val doc = parser.parseFile(inputFile).mapNamespaces(namespaceMappings.toMap)
 
-      if (verbose) println("+ Compiling %s".format(inputFile))
-      val resolvedDoc = TypeResolver(allowStructRHS = rhsStructs)(doc0) // TODO: THRIFT-54
-      val generator = GeneratorFactory(
-        language,
-        resolvedDoc.resolver.includeMap,
-        defaultNamespace,
-        experimentFlags)
+        if (verbose) println("+ Compiling %s".format(inputFile))
+        val resolvedDoc = TypeResolver()(doc)
+        val generator = GeneratorFactory(
+          language,
+          resolvedDoc,
+          defaultNamespace,
+          experimentFlags)
 
-      generator match {
-        case g: ScalaGenerator => g.warnOnJavaNamespaceFallback = scalaWarnOnJavaNSFallback
-        case _ => ()
-      }
-
-      val generatedFiles = generator(
-        resolvedDoc.document,
-        flags.toSet,
-        new File(destFolder),
-        dryRun
-      ).map { _.getPath }
-
-      if (verbose) {
-        println("+ Generated %s".format(generatedFiles.mkString(", ")))
-      }
-      fileMapWriter.foreach { w =>
-        generatedFiles.foreach { path =>
-          w.write(inputFile + " -> " + path + "\n")
+        generator match {
+          case g: ScalaGenerator => g.warnOnJavaNamespaceFallback = scalaWarnOnJavaNSFallback
+          case _ => ()
         }
+
+        val generatedFiles = generator(
+          flags.toSet,
+          new File(destFolder),
+          dryRun
+        ).map {
+          _.getPath
+        }
+        if (verbose) {
+          println("+ Generated %s".format(generatedFiles.mkString(", ")))
+        }
+        fileMapWriter.foreach { w =>
+          generatedFiles.foreach { path =>
+            w.write(inputFile + " -> " + path + "\n")
+          }
+        }
+      } catch {
+        case e: Throwable => throw new FileParseException(inputFile, e)
       }
     }
 

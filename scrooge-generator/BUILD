@@ -1,6 +1,4 @@
-maven_layout()
-
-jar_library(name='scrooge-generator',
+target(
   dependencies=[
     'scrooge/scrooge-generator/src/main/scala'
   ]
